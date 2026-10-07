@@ -1,0 +1,62 @@
+# Daily TLS certificate check for every public hostname, staging and prod.
+#
+# Runs OUTSIDE the servers/cluster on purpose: this is the check techneip-infra
+# was missing when its cert-manager renewals silently failed for weeks and two
+# sites went 502. It opens a real TLS connection to each host, verifies the
+# chain, and fails the run if any certificate expires within WARN_DAYS or the
+# handshake fails. A failed scheduled run emails the repo owner (GitHub default
+# notification for workflow failures), so expiry is noticed with three weeks to
+# act instead of after the fact.
+#
+# Independent of what issues the cert (certbot today, ACM later): it only looks
+# at what the public endpoint serves.
+name: TLS expiry check
+
+on:
+  schedule:
+    - cron: "17 9 * * *"   # daily, 09:17 UTC
+  workflow_dispatch:
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    env:
+      WARN_DAYS: 21
+      HOSTS: >-
+        incertotech.com
+        react-to-do.incertotech.com
+        react-electoral-map.incertotech.com
+        react-course-admin.incertotech.com
+        nest-to-do-api.incertotech.com
+        nest-blog-api.incertotech.com
+        nest-course-admin-api.incertotech.com
+        staging.incertotech.com
+        react-to-do.staging.incertotech.com
+        react-electoral-map.staging.incertotech.com
+        react-course-admin.staging.incertotech.com
+        nest-to-do-api.staging.incertotech.com
+        nest-blog-api.staging.incertotech.com
+        nest-course-admin-api.staging.incertotech.com
+    steps:
+      - name: Check certificate on every host
+        run: |
+          set -u
+          fail=0
+          now=$(date +%s)
+          printf "%-44s %-12s %s\n" HOST EXPIRES DAYS_LEFT
+          for h in $HOSTS; do
+            out=$(echo | timeout 20 openssl s_client -connect "$h:443" -servername "$h" -verify_return_error 2>/dev/null)
+            if [ -z "$out" ]; then
+              printf "%-44s %-12s %s\n" "$h" "-" "HANDSHAKE FAILED"; fail=1; continue
+            fi
+            not_after=$(printf '%s' "$out" | openssl x509 -noout -enddate 2>/dev/null | cut -d= -f2)
+            if [ -z "$not_after" ]; then
+              printf "%-44s %-12s %s\n" "$h" "-" "NO CERTIFICATE"; fail=1; continue
+            fi
+            exp=$(date -d "$not_after" +%s)
+            days=$(( (exp - now) / 86400 ))
+            status=""
+            if [ "$days" -lt "$WARN_DAYS" ]; then status="  <-- EXPIRES IN < ${WARN_DAYS} DAYS"; fail=1; fi
+            printf "%-44s %-12s %s%s\n" "$h" "$(date -d "$not_after" +%F)" "$days" "$status"
+          done
+          exit $fail

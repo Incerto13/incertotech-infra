@@ -1,0 +1,7 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: incertotech-staging
+  labels:
+    name: incertotech-staging
+    environment: staging

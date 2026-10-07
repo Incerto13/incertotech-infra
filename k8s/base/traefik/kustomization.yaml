@@ -1,0 +1,21 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+# Traefik ingress controller (own namespace `traefik`). Replaces the minikube
+# ingress-nginx addon: ingress-nginx is retired upstream, and techneip-infra
+# already moved to Traefik. Routing objects are Traefik IngressRoute CRDs in
+# the per-env overlays, not core Ingress — same choice as techneip.
+#
+# Deployed standalone, NOT through the per-env overlays: those set a global
+# `namespace:` transform that would try to move these resources.
+#
+#   kubectl --context=incertotech apply --server-side -k k8s/base/traefik
+#
+# This config is for a cluster where Traefik terminates TLS itself (local:
+# mkcert secret). In the cloud, TLS terminates at an AWS ALB with an ACM
+# certificate (see K8S_CONTEXT.md) and Traefik only listens on :80 — that
+# controller will be a sibling directory with the websecure entrypoint and the
+# https redirect removed.
+resources:
+  - ../traefik-crds
+  - controller.yaml

@@ -1,0 +1,45 @@
+# Traefik Middleware objects for the local overlay. The IngressRoute in
+# ingressroute.yaml references them by name (same namespace).
+
+# Strip the Origin header before proxying to the Nest servers.
+#
+# Each server enforces a hard-coded CORS whitelist (see <app>/server/src/main.ts)
+# that only knows the real incertotech.com hostnames. Browsers send Origin on
+# every non-GET request, even same-origin ones, so POST/PUT/DELETE from
+# https://react-to-do.incertotech.local would get "Not allowed by CORS". Web and
+# API share a host here, so CORS isn't needed at all — removing the header makes
+# the server take its "no origin => same origin" branch. Setting a custom
+# request header to "" deletes it in Traefik. Local only: staging/prod have
+# their hostnames whitelisted in the app code and don't use this.
+apiVersion: traefik.io/v1alpha1
+kind: Middleware
+metadata:
+  name: strip-origin
+spec:
+  headers:
+    customRequestHeaders:
+      Origin: ""
+---
+# "/" -> "/docs" for the two REST API-docs hosts. nginx-proxy does this with
+# `proxy_pass http://...:81xx/docs/`; ingress-nginx did it with app-root. Only
+# the bare root is redirected (see the Path(`/`) routes), so Swagger's relative
+# asset and docs-json fetches pass through untouched.
+apiVersion: traefik.io/v1alpha1
+kind: Middleware
+metadata:
+  name: redirect-root-to-docs
+spec:
+  redirectRegex:
+    regex: "^(https?://[^/]+)/?$"
+    replacement: "${1}/docs"
+---
+# "/" -> "/graphql" for nest-blog-api (GraphQL playground). /rest (Swagger) and
+# /graphql pass through.
+apiVersion: traefik.io/v1alpha1
+kind: Middleware
+metadata:
+  name: redirect-root-to-graphql
+spec:
+  redirectRegex:
+    regex: "^(https?://[^/]+)/?$"
+    replacement: "${1}/graphql"

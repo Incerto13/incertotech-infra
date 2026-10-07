@@ -1,0 +1,133 @@
+# react-course-admin — ONE pod per app: Postgres (seeded at first init) +
+# NestJS server + React web (nginx) as containers of the same pod. Same shape
+# as react-to-do/react-to-do.yaml (see the comments there for how the pod is
+# wired: postgres is a native-sidecar initContainer, the server reaches it on
+# localhost, one Service exposes :80 and :3001). Only names, the postgres port
+# (5434) and the env-var prefix differ.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: react-course-admin
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app: react-course-admin
+  template:
+    metadata:
+      labels:
+        app: react-course-admin
+    spec:
+      initContainers:
+      - name: postgres
+        image: react-course-admin_postgres
+        restartPolicy: Always          # native sidecar
+        env:
+        - name: POSTGRES_DB
+          value: "react-course-admin"
+        - name: POSTGRES_USER
+          value: postgres
+        - name: POSTGRES_PASSWORD
+          value: postgres
+        ports:
+        - containerPort: 5434
+        startupProbe:
+          exec:
+            command: ["pg_isready", "-U", "postgres", "-p", "5434"]
+          periodSeconds: 2
+          failureThreshold: 60
+        livenessProbe:
+          exec:
+            command: ["pg_isready", "-U", "postgres", "-p", "5434"]
+          periodSeconds: 20
+        volumeMounts:
+        - name: data
+          mountPath: /var/lib/postgresql
+        resources:
+          requests:
+            memory: "64Mi"
+            cpu: "25m"
+          limits:
+            memory: "256Mi"
+            cpu: "500m"
+      containers:
+      - name: server
+        image: react-course-admin_server
+        env:
+        - name: REACT_COURSE_ADMIN_TYPEORM_HOST
+          value: localhost
+        - name: REACT_COURSE_ADMIN_POSTGRES_PORT
+          value: "5434"
+        ports:
+        - containerPort: 3001
+        readinessProbe:
+          tcpSocket:
+            port: 3001
+          initialDelaySeconds: 3
+          periodSeconds: 5
+        livenessProbe:
+          tcpSocket:
+            port: 3001
+          initialDelaySeconds: 30
+          periodSeconds: 15
+        resources:
+          requests:
+            memory: "96Mi"
+            cpu: "25m"
+          limits:
+            memory: "256Mi"
+            cpu: "500m"
+      - name: web
+        image: react-course-admin_web
+        ports:
+        - containerPort: 80
+        readinessProbe:
+          httpGet:
+            path: /
+            port: 80
+          initialDelaySeconds: 2
+          periodSeconds: 5
+        livenessProbe:
+          httpGet:
+            path: /
+            port: 80
+          initialDelaySeconds: 10
+          periodSeconds: 15
+        resources:
+          requests:
+            memory: "16Mi"
+            cpu: "10m"
+          limits:
+            memory: "64Mi"
+            cpu: "200m"
+      volumes:
+      - name: data
+        persistentVolumeClaim:
+          claimName: react-course-admin-postgres-data
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: react-course-admin-postgres-data
+spec:
+  accessModes: ["ReadWriteOnce"]
+  resources:
+    requests:
+      storage: 1Gi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: react-course-admin
+spec:
+  selector:
+    app: react-course-admin
+  ports:
+  - name: web
+    port: 80
+    targetPort: 80
+  - name: api
+    port: 3001
+    targetPort: 3001

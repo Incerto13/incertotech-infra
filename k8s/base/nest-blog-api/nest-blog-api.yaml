@@ -1,0 +1,106 @@
+# nest-blog-api — ONE pod per app: Postgres (seeded at first init) + NestJS
+# server (GraphQL at /graphql, Swagger at /rest) as containers of the same pod.
+# No web tier. Same shape as react-to-do/react-to-do.yaml (see the comments
+# there): postgres is a native-sidecar initContainer, the server reaches it on
+# localhost, one Service exposes :3001. Postgres port 5435.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: nest-blog-api
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app: nest-blog-api
+  template:
+    metadata:
+      labels:
+        app: nest-blog-api
+    spec:
+      initContainers:
+      - name: postgres
+        image: nest-blog-api_postgres
+        restartPolicy: Always          # native sidecar
+        env:
+        - name: POSTGRES_DB
+          value: "nest-blog"
+        - name: POSTGRES_USER
+          value: postgres
+        - name: POSTGRES_PASSWORD
+          value: postgres
+        ports:
+        - containerPort: 5435
+        startupProbe:
+          exec:
+            command: ["pg_isready", "-U", "postgres", "-p", "5435"]
+          periodSeconds: 2
+          failureThreshold: 60
+        livenessProbe:
+          exec:
+            command: ["pg_isready", "-U", "postgres", "-p", "5435"]
+          periodSeconds: 20
+        volumeMounts:
+        - name: data
+          mountPath: /var/lib/postgresql
+        resources:
+          requests:
+            memory: "64Mi"
+            cpu: "25m"
+          limits:
+            memory: "256Mi"
+            cpu: "500m"
+      containers:
+      - name: server
+        image: nest-blog-api_server
+        env:
+        - name: NEST_BLOG_API_TYPEORM_HOST
+          value: localhost
+        - name: NEST_BLOG_API_POSTGRES_PORT
+          value: "5435"
+        ports:
+        - containerPort: 3001
+        readinessProbe:
+          tcpSocket:
+            port: 3001
+          initialDelaySeconds: 3
+          periodSeconds: 5
+        livenessProbe:
+          tcpSocket:
+            port: 3001
+          initialDelaySeconds: 30
+          periodSeconds: 15
+        resources:
+          requests:
+            memory: "96Mi"
+            cpu: "25m"
+          limits:
+            memory: "256Mi"
+            cpu: "500m"
+      volumes:
+      - name: data
+        persistentVolumeClaim:
+          claimName: nest-blog-api-postgres-data
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: nest-blog-api-postgres-data
+spec:
+  accessModes: ["ReadWriteOnce"]
+  resources:
+    requests:
+      storage: 1Gi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: nest-blog-api
+spec:
+  selector:
+    app: nest-blog-api
+  ports:
+  - name: api
+    port: 3001
+    targetPort: 3001

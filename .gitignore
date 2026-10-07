@@ -1,13 +1,21 @@
 .vscode
 .DS_Store
 /homepage
-/react-electoral-map
-/react-to-do
-/react-course-admin
-/nest-blog-api
+/portfolio
 
 # sensitive
 .conf*
 .env
 /certbot
 /nginx
+
+# terraform (state lives in s3://incertotech-terraform-state)
+**/.terraform/
+*.tfstate
+*.tfstate.*
+*.tfvars
+!*.auto.tfvars.example
+.terraform.lock.hcl
+
+# large local media (Project Storm screen recordings), not for git
+/Screen-Recording GIFs/

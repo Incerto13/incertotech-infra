@@ -1,0 +1,99 @@
+# STAGING routing — same host -> service mapping as nginx/default.conf-staging.
+#
+# TLS is NOT terminated here. The cloud design (K8S_CONTEXT.md §2) puts an AWS
+# ALB in front of the cluster holding one ACM certificate for all seven hosts;
+# ACM renews it automatically, so nothing in the cluster has an expiry to
+# manage. The ALB also does the 80 -> 443 redirect. Traefik only listens on the
+# plain-HTTP `web` entrypoint and routes. No cert-manager, no Let's Encrypt.
+#
+# Traefik IngressRoute (not core Ingress) — same choice as techneip-infra.
+# Longer rules win automatically: `Host && PathPrefix(/api)` beats `Host`,
+# and `Host && Path(/)` beats both.
+apiVersion: traefik.io/v1alpha1
+kind: IngressRoute
+metadata:
+  name: incertotech-routes
+spec:
+  entryPoints:
+    - web
+  routes:
+    # homepage
+    - kind: Rule
+      match: Host(`staging.incertotech.com`)
+      services:
+        - name: homepage
+          port: 80
+
+    # react-to-do: /api -> nest server, everything else -> react build
+    - kind: Rule
+      match: Host(`react-to-do.staging.incertotech.com`) && PathPrefix(`/api`)
+      services:
+        - name: react-to-do
+          port: 3001
+    - kind: Rule
+      match: Host(`react-to-do.staging.incertotech.com`)
+      services:
+        - name: react-to-do
+          port: 80
+
+    # react-electoral-map: static only
+    - kind: Rule
+      match: Host(`react-electoral-map.staging.incertotech.com`)
+      services:
+        - name: react-electoral-map
+          port: 80
+
+    # react-course-admin: /api -> nest server, everything else -> react build
+    - kind: Rule
+      match: Host(`react-course-admin.staging.incertotech.com`) && PathPrefix(`/api`)
+      services:
+        - name: react-course-admin
+          port: 3001
+    - kind: Rule
+      match: Host(`react-course-admin.staging.incertotech.com`)
+      services:
+        - name: react-course-admin
+          port: 80
+
+    # API-docs hosts: "/" redirects to /docs, everything else passes through.
+    # The redirect route still needs a service (schema requirement); it is
+    # never reached because the middleware answers with a 3xx first.
+    - kind: Rule
+      match: Host(`nest-to-do-api.staging.incertotech.com`) && Path(`/`)
+      middlewares:
+        - name: redirect-root-to-docs
+      services:
+        - name: react-to-do
+          port: 3001
+    - kind: Rule
+      match: Host(`nest-to-do-api.staging.incertotech.com`)
+      services:
+        - name: react-to-do
+          port: 3001
+
+    - kind: Rule
+      match: Host(`nest-course-admin-api.staging.incertotech.com`) && Path(`/`)
+      middlewares:
+        - name: redirect-root-to-docs
+      services:
+        - name: react-course-admin
+          port: 3001
+    - kind: Rule
+      match: Host(`nest-course-admin-api.staging.incertotech.com`)
+      services:
+        - name: react-course-admin
+          port: 3001
+
+    # nest-blog-api: "/" -> GraphQL playground; /rest and /graphql pass through
+    - kind: Rule
+      match: Host(`nest-blog-api.staging.incertotech.com`) && Path(`/`)
+      middlewares:
+        - name: redirect-root-to-graphql
+      services:
+        - name: nest-blog-api
+          port: 3001
+    - kind: Rule
+      match: Host(`nest-blog-api.staging.incertotech.com`)
+      services:
+        - name: nest-blog-api
+          port: 3001

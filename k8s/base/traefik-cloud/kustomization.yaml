@@ -1,0 +1,50 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+# Traefik for the k3s node behind CloudFront. Same controller as ../traefik
+# (local) with two differences, because TLS terminates at CloudFront with an
+# ACM certificate (K8S_CONTEXT.md §2):
+#   • only the plain-HTTP `web` entrypoint on :80 — no websecure, no TLS
+#   • no http -> https redirect (CloudFront does it; doing it here too would
+#     loop, since CloudFront always reaches us over HTTP)
+# The Service stays type LoadBalancer: k3s's bundled servicelb (klipper) binds
+# it to the node's host port 80, which is the port CloudFront's security-group
+# rule admits.
+#
+# Rendered and applied by .github/workflows/k8s-deploy.yml together with the
+# env overlay. Applied standalone, NOT through the overlays (they set a
+# namespace transform that would move it out of the `traefik` namespace).
+
+resources:
+  - ../traefik
+
+patches:
+  - target:
+      kind: Deployment
+      name: traefik
+    patch: |-
+      - op: replace
+        path: /spec/template/spec/containers/0/args
+        value:
+          - --providers.kubernetescrd
+          - --entrypoints.web.address=:80
+          - --ping=true
+          - --log.level=INFO
+          - --accesslog=true
+      - op: replace
+        path: /spec/template/spec/containers/0/ports
+        value:
+          - name: web
+            containerPort: 80
+          - name: traefik
+            containerPort: 8080
+  - target:
+      kind: Service
+      name: traefik
+    patch: |-
+      - op: replace
+        path: /spec/ports
+        value:
+          - name: http
+            port: 80
+            targetPort: web
