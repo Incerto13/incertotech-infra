@@ -101,31 +101,37 @@ jobs:
 
       - name: Render manifests
         run: |
-          {
-            kustomize build k8s/base/traefik-cloud
-            echo "---"
-            kustomize build "k8s/overlays/${{ inputs.env }}"
-          } > rendered.yaml
-          echo "rendered $(grep -c '^kind:' rendered.yaml) objects"
+          # Two manifests, applied in order: Traefik (incl. its CRDs) first, then the
+          # apps. Applied together on a fresh cluster, the IngressRoutes/Middlewares
+          # are rejected before the CRDs are registered ("ensure CRDs are installed
+          # first"), which failed the very first staging deploys.
+          kustomize build k8s/base/traefik-cloud > traefik.yaml
+          kustomize build "k8s/overlays/${{ inputs.env }}" > rendered.yaml
+          echo "rendered $(grep -c '^kind:' traefik.yaml) traefik + $(grep -c '^kind:' rendered.yaml) app objects"
 
       - name: Upload to S3
         id: upload
         run: |
           prefix="s3://${{ steps.target.outputs.bucket }}/${{ inputs.env }}/${GITHUB_SHA}-${GITHUB_RUN_ID}"
+          aws s3 cp traefik.yaml "${prefix}-traefik.yaml"
           aws s3 cp rendered.yaml "${prefix}.yaml"
+          echo "traefik_uri=${prefix}-traefik.yaml" >> "$GITHUB_OUTPUT"
           echo "uri=${prefix}.yaml" >> "$GITHUB_OUTPUT"
 
       - name: Apply on the node via SSM
         env:
           MANIFEST_URI: ${{ steps.upload.outputs.uri }}
+          TRAEFIK_URI: ${{ steps.upload.outputs.traefik_uri }}
         run: |
           # Apply the rendered manifest on the node and wait for the rollout.
           python3 - <<'PY'
           import json, os
-          manifest = os.environ["MANIFEST_URI"]
+          manifest, traefik = os.environ["MANIFEST_URI"], os.environ["TRAEFIK_URI"]
           commands = [
               "set -e",
               "export KUBECONFIG=/etc/rancher/k3s/k3s.yaml",
+              f"/usr/local/bin/incertotech-deploy {traefik}",
+              "kubectl wait --for=condition=Established crd --all --timeout=60s",
               f"/usr/local/bin/incertotech-deploy {manifest}",
           ]
           json.dump({"commands": commands, "executionTimeout": ["900"]}, open("ssm-params.json", "w"))
@@ -156,8 +162,9 @@ jobs:
         if: always()
         run: |
           find k8s/overlays/${{ inputs.env }}/secrets -name '*.env' ! -name '*.enc.env' -exec shred -u {} +
-          rm -f rendered.yaml
+          rm -f rendered.yaml traefik.yaml
           if [ -n "${{ steps.upload.outputs.uri }}" ]; then
             aws s3 rm "${{ steps.upload.outputs.uri }}"
+            aws s3 rm "${{ steps.upload.outputs.traefik_uri }}"
           fi
 
