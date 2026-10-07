@@ -4,17 +4,21 @@
 # click before each prod deploy). Each environment has its own concurrency lock.
 #
 # How it works — no AWS keys, no SSH key, no kubeconfig in GitHub:
-#   1. assume the incertotech-github-deploy IAM role via GitHub OIDC
-#   2. decrypt k8s/overlays/<env>/secrets/*.enc.env with SOPS (age key from the
+#   1. build + push every app image from its repo's env branch (staging ->
+#      staging, prod -> main) with an immutable <env>-<sha> tag, and pin the
+#      overlay to those tags (bin/k8s-build-images.sh)
+#   2. assume the incertotech-github-deploy IAM role via GitHub OIDC
+#   3. decrypt k8s/overlays/<env>/secrets/*.enc.env with SOPS (age key from the
 #      SOPS_AGE_KEY secret), render k8s/base/traefik-cloud + the overlay
-#   3. upload the rendered manifest to the deploy-artifacts S3 bucket
-#   4. ask SSM Run Command to execute `incertotech-deploy <s3 uri>` on the
+#   4. upload the rendered manifest to the deploy-artifacts S3 bucket
+#   5. ask SSM Run Command to execute `incertotech-deploy <s3 uri>` on the
 #      node, which applies it and waits for the rollout
 #
-# Nothing to configure per repo except the SOPS_AGE_KEY secret: the deploy role
-# ARN is fixed (created by terraform/shared), and the k3s instance + artifacts
-# bucket are looked up at run time by their terraform-managed name/tag.
-# Repository secret: SOPS_AGE_KEY = contents of ~/.config/sops/age/incertotech-keys.txt
+# The deploy role ARN is fixed (created by terraform/shared), and the k3s
+# instance + artifacts bucket are looked up at run time by their
+# terraform-managed name/tag. Repository secrets:
+#   SOPS_AGE_KEY = contents of ~/.config/sops/age/incertotech-keys.txt
+#   DOCKER_USERNAME / DOCKER_PASSWORD = Docker Hub push credentials (incerto13)
 # The rendered manifest contains the decrypted Secrets, so it is deleted from S3
 # right after the apply (and the bucket expires old object versions).
 name: "K8s: Deploy"
@@ -52,6 +56,14 @@ jobs:
           exit 1
 
       - uses: actions/checkout@v4
+
+      - name: Docker Hub login
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKER_USERNAME }}
+          password: ${{ secrets.DOCKER_PASSWORD }}
+
+      - uses: docker/setup-buildx-action@v3
 
       - name: Configure AWS credentials (OIDC)
         uses: aws-actions/configure-aws-credentials@v4
@@ -99,6 +111,11 @@ jobs:
           done
           ls k8s/overlays/${{ inputs.env }}/secrets/
 
+      - name: Build and push images
+        # also pins k8s/overlays/<env>/kustomization.yaml (this checkout only)
+        # to the tags it just pushed, which the next step renders
+        run: bin/k8s-build-images.sh "${{ inputs.env }}" "$RUNNER_TEMP/apps"
+
       - name: Render manifests
         run: |
           # Two manifests, applied in order: Traefik (incl. its CRDs) first, then the
@@ -122,17 +139,30 @@ jobs:
         env:
           MANIFEST_URI: ${{ steps.upload.outputs.uri }}
           TRAEFIK_URI: ${{ steps.upload.outputs.traefik_uri }}
+          NAMESPACE: incertotech-${{ inputs.env }}
         run: |
           # Apply the rendered manifest on the node and wait for the rollout.
           python3 - <<'PY'
           import json, os
           manifest, traefik = os.environ["MANIFEST_URI"], os.environ["TRAEFIK_URI"]
+          ns = os.environ["NAMESPACE"]
+          # incertotech-deploy waits with ONE 300s deadline for all deployments
+          # in order, so a single stuck one makes every later one report "timed
+          # out". On failure, print what is actually wrong: the pods that are
+          # not fully ready, and the namespace's recent warnings.
+          diagnose = (
+              f"{{ echo '::group::not-ready pods in {ns}'; "
+              f"kubectl -n {ns} get pods --no-headers | awk '{{split($2,r,\"/\"); if (r[1]!=r[2] || $3!=\"Running\") print}}'; "
+              f"echo '::endgroup::'; echo '::group::recent warnings in {ns}'; "
+              f"kubectl -n {ns} get events --field-selector type=Warning --sort-by=.lastTimestamp | tail -20; "
+              f"echo '::endgroup::'; exit 1; }}"
+          )
           commands = [
               "set -e",
               "export KUBECONFIG=/etc/rancher/k3s/k3s.yaml",
               f"/usr/local/bin/incertotech-deploy {traefik}",
               "kubectl wait --for=condition=Established crd --all --timeout=60s",
-              f"/usr/local/bin/incertotech-deploy {manifest}",
+              f"/usr/local/bin/incertotech-deploy {manifest} || {diagnose}",
           ]
           json.dump({"commands": commands, "executionTimeout": ["900"]}, open("ssm-params.json", "w"))
           PY
