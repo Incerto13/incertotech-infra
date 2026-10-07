@@ -45,7 +45,7 @@ docker info >/dev/null 2>&1 || fail "Docker is not running"
 HAS_MKCERT=false; command -v mkcert >/dev/null 2>&1 && HAS_MKCERT=true
 $HAS_MKCERT && ok "mkcert (HTTPS enabled)" || warn "mkcert not found — TLS secret will be skipped (brew install mkcert)"
 [ -d "$ROOT/homepage" ] || fail "$ROOT/homepage not found — clone the homepage repo first"
-for app in react-to-do react-electoral-map react-course-admin nest-blog-api; do
+for app in react-to-do react-electoral-map react-course-admin nest-blog-api node-ecommerce django-blog; do
   [ -d "$APPS/$app" ] || fail "$APPS/$app not found — clone the app repo into portfolio/ first (same as run-docker.dev.sh expects)"
 done
 
@@ -88,6 +88,8 @@ if $HAS_MKCERT; then
     --dry-run=client -o yaml | $KC apply -f - >/dev/null
   ok "TLS secret incertotech-tls applied"
 fi
+# App secrets (session/secret keys, DB passwords): random, created once, never in git.
+KC="$KC" "$ROOT/k8s/ensure-secrets.sh" "$NAMESPACE" | while read -r line; do ok "$line"; done
 
 # ── 4. images ───────────────────────────────────────────────────────────────
 header "4/7 Images"
@@ -132,6 +134,8 @@ else
   build_image react-course-admin_web       "$APPS/react-course-admin/web"     docker/Dockerfile
   build_image nest-blog-api_postgres       "$APPS/nest-blog-api"              docker/postgres/Dockerfile
   build_image nest-blog-api_server         "$APPS/nest-blog-api"              docker/server/Dockerfile
+  build_image node-ecommerce               "$APPS/node-ecommerce/web"         Dockerfile
+  build_image django-blog                  "$APPS/django-blog/web"            Dockerfile
   eval "$(minikube -p "$PROFILE" docker-env --unset)"
   ok "all images built"
 fi
@@ -140,6 +144,11 @@ fi
 header "5/7 Deploy (kustomize overlays/local)"
 $KC apply --server-side --force-conflicts -k "$OVERLAY" >/dev/null
 ok "manifests applied"
+# Images are rebuilt under the same :local tags, which Kubernetes can't detect as
+# a change, so restart the deployments to pick up freshly built images.
+if ! $SKIP_BUILD; then
+  $KC -n "$NAMESPACE" rollout restart deployment >/dev/null && ok "deployments restarted onto the new images"
+fi
 $KC -n "$NAMESPACE" delete ingress --all --ignore-not-found >/dev/null 2>&1 || true   # prune ingress-nginx-era objects
 info "waiting for deployments..."
 $KC -n "$NAMESPACE" wait --for=condition=available deployment --all --timeout=300s >/dev/null \

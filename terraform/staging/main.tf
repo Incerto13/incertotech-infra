@@ -60,6 +60,12 @@ module "edge" {
   origin_dns_name = data.terraform_remote_state.shared.outputs.origin_dns_name
   cutover         = var.cutover
 
+  # No hosted zone of their own: records go into the staging.incertotech.com zone.
+  zone_for_host = {
+    "node-ecommerce.staging.incertotech.com" = "staging.incertotech.com"
+    "django-blog.staging.incertotech.com"    = "staging.incertotech.com"
+  }
+
   # Same seven hostnames nginx/default.conf-staging serves today.
   hosts = [
     "staging.incertotech.com",
@@ -69,6 +75,8 @@ module "edge" {
     "nest-to-do-api.staging.incertotech.com",
     "nest-blog-api.staging.incertotech.com",
     "nest-course-admin-api.staging.incertotech.com",
+    "node-ecommerce.staging.incertotech.com",
+    "django-blog.staging.incertotech.com",
   ]
 }
 

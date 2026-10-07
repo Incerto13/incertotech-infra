@@ -1,0 +1,130 @@
+# django-blog ("Tax Blog") — ONE pod: Postgres as a native sidecar + the Django
+# app (gunicorn, static files via WhiteNoise). The app's entrypoint waits for
+# Postgres, runs migrations, and seeds the demo posts/users on an empty DB.
+#
+# Secrets (DJANGO_SECRET_KEY, POSTGRES_PASSWORD) come from django-blog-secrets,
+# created on the cluster by k8s/ensure-secrets.sh, never in git.
+# ALLOWED_HOSTS / CSRF_TRUSTED_ORIGINS defaults in settings.py already cover
+# django-blog.{incertotech.com, staging.incertotech.com, incertotech.local}.
+# Probes are TCP, not HTTP: kubelet's Host header is the pod IP, which Django's
+# ALLOWED_HOSTS would reject with a 400.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: django-blog
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app: django-blog
+  template:
+    metadata:
+      labels:
+        app: django-blog
+    spec:
+      initContainers:
+      - name: postgres
+        image: postgres:17-alpine
+        restartPolicy: Always          # native sidecar
+        env:
+        - name: POSTGRES_DB
+          value: blog
+        - name: POSTGRES_USER
+          value: blog
+        - name: POSTGRES_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: django-blog-secrets
+              key: POSTGRES_PASSWORD
+        - name: PGDATA
+          value: /var/lib/postgresql/data/pgdata   # subdir: volume roots can hold lost+found
+        ports:
+        - containerPort: 5432
+        startupProbe:
+          exec:
+            command: ["pg_isready", "-U", "blog", "-d", "blog"]
+          periodSeconds: 2
+          failureThreshold: 60
+        livenessProbe:
+          exec:
+            command: ["pg_isready", "-U", "blog", "-d", "blog"]
+          periodSeconds: 20
+        volumeMounts:
+        - name: data
+          mountPath: /var/lib/postgresql/data
+        resources:
+          requests:
+            memory: "48Mi"
+            cpu: "25m"
+          limits:
+            memory: "192Mi"
+            cpu: "500m"
+      containers:
+      - name: web
+        image: django-blog
+        env:
+        - name: DJANGO_ENV
+          value: production
+        - name: DJANGO_SECRET_KEY
+          valueFrom:
+            secretKeyRef:
+              name: django-blog-secrets
+              key: DJANGO_SECRET_KEY
+        - name: POSTGRES_DB
+          value: blog
+        - name: POSTGRES_USER
+          value: blog
+        - name: POSTGRES_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: django-blog-secrets
+              key: POSTGRES_PASSWORD
+        - name: DB_HOST
+          value: localhost
+        ports:
+        - containerPort: 8000
+        readinessProbe:
+          tcpSocket:
+            port: 8000
+          initialDelaySeconds: 5
+          periodSeconds: 5
+        livenessProbe:
+          tcpSocket:
+            port: 8000
+          initialDelaySeconds: 30
+          periodSeconds: 15
+        resources:
+          requests:
+            memory: "96Mi"
+            cpu: "25m"
+          limits:
+            memory: "256Mi"
+            cpu: "500m"
+      volumes:
+      - name: data
+        persistentVolumeClaim:
+          claimName: django-blog-postgres-data
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: django-blog-postgres-data
+spec:
+  accessModes: ["ReadWriteOnce"]
+  resources:
+    requests:
+      storage: 1Gi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: django-blog
+spec:
+  selector:
+    app: django-blog
+  ports:
+  - name: web
+    port: 8000
+    targetPort: 8000

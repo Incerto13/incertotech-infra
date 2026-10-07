@@ -7,9 +7,10 @@
 # (the node's security group admits CloudFront's ranges only) and forwards the
 # viewer's Host header so Traefik can route by hostname.
 #
-# DNS: every incertotech hostname has its OWN hosted zone (the account was set
-# up that way; the user chose to keep it). So each ACM validation CNAME and each
-# alias record is written into the zone named exactly after that host.
+# DNS: most incertotech hostnames have their OWN hosted zone (the account was set
+# up that way; the user chose to keep it), so ACM validation CNAMEs and alias
+# records go into the zone named exactly after each host. Hosts without one
+# (newer apps) are mapped to a parent zone via var.zone_for_host.
 # Alias records are gated by var.cutover — until it is true the existing A
 # records keep pointing at the docker-compose instances and nothing changes
 # for visitors.
@@ -29,7 +30,7 @@ locals {
 
 data "aws_route53_zone" "host" {
   for_each = toset(var.hosts)
-  name     = "${each.value}."
+  name     = "${lookup(var.zone_for_host, each.value, each.value)}."
 }
 
 # ───────────────────────────── certificate ─────────────────────────────

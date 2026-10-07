@@ -34,6 +34,10 @@ images:
     newTag: local
   - name: nest-blog-api_server
     newTag: local
+  - name: node-ecommerce
+    newTag: local
+  - name: django-blog
+    newTag: local
 
 # No imagePullPolicy patch: the base sets none, so Kubernetes defaults to
 # IfNotPresent for the :local tags, which only exist inside minikube's docker

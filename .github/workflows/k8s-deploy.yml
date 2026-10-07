@@ -77,17 +77,37 @@ jobs:
       - name: Upload to S3
         id: upload
         run: |
-          key="${{ inputs.env }}/${GITHUB_SHA}-${GITHUB_RUN_ID}.yaml"
-          aws s3 cp rendered.yaml "s3://${{ vars.DEPLOY_BUCKET }}/${key}"
-          echo "uri=s3://${{ vars.DEPLOY_BUCKET }}/${key}" >> "$GITHUB_OUTPUT"
+          prefix="s3://${{ vars.DEPLOY_BUCKET }}/${{ inputs.env }}/${GITHUB_SHA}-${GITHUB_RUN_ID}"
+          aws s3 cp rendered.yaml "${prefix}.yaml"
+          aws s3 cp k8s/ensure-secrets.sh "${prefix}-ensure-secrets.sh"
+          echo "uri=${prefix}.yaml" >> "$GITHUB_OUTPUT"
+          echo "secrets_uri=${prefix}-ensure-secrets.sh" >> "$GITHUB_OUTPUT"
 
       - name: Apply on the node via SSM
+        env:
+          NAMESPACE: incertotech-${{ inputs.env }}
+          MANIFEST_URI: ${{ steps.upload.outputs.uri }}
+          SECRETS_URI: ${{ steps.upload.outputs.secrets_uri }}
         run: |
+          # 1) create the app secrets in the namespace if missing (random values,
+          #    created once on the node, never in git), 2) apply + wait for rollout.
+          python3 - <<'PY'
+          import json, os
+          ns, manifest, script = os.environ["NAMESPACE"], os.environ["MANIFEST_URI"], os.environ["SECRETS_URI"]
+          commands = [
+              "set -e",
+              "export KUBECONFIG=/etc/rancher/k3s/k3s.yaml",
+              f"aws s3 cp {script} /tmp/ensure-secrets.sh",
+              f"sh /tmp/ensure-secrets.sh {ns}",
+              f"/usr/local/bin/incertotech-deploy {manifest}",
+          ]
+          json.dump({"commands": commands, "executionTimeout": ["900"]}, open("ssm-params.json", "w"))
+          PY
           cmd_id=$(aws ssm send-command \
             --instance-ids "${{ vars.K3S_INSTANCE_ID }}" \
             --document-name AWS-RunShellScript \
             --comment "k8s-deploy ${{ inputs.env }} ${GITHUB_SHA::7}" \
-            --parameters "commands=[\"/usr/local/bin/incertotech-deploy ${{ steps.upload.outputs.uri }}\"],executionTimeout=[\"900\"]" \
+            --parameters file://ssm-params.json \
             --query 'Command.CommandId' --output text)
           echo "SSM command: $cmd_id"
           # poll until the command finishes, then surface its output

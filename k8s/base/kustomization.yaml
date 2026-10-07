@@ -16,6 +16,17 @@ resources:
   - react-electoral-map/react-electoral-map.yaml
   - react-course-admin/react-course-admin.yaml
   - nest-blog-api/nest-blog-api.yaml
+  - node-ecommerce/node-ecommerce.yaml
+  - django-blog/django-blog.yaml
+
+# Demo catalogue for node-ecommerce, imported once into an empty MongoDB by the
+# pod's seed init container. Copied from portfolio/node-ecommerce/mongo-seed/.
+configMapGenerator:
+  - name: node-ecommerce-seed
+    files:
+      - node-ecommerce/seed/products_init.json
+      - node-ecommerce/seed/users_init.json
+      - node-ecommerce/seed/orders_init.json
 
 labels:
   - pairs:

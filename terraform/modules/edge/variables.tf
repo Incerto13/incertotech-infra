@@ -23,3 +23,9 @@ variable "cutover" {
   type        = bool
   default     = false
 }
+
+variable "zone_for_host" {
+  description = "Hosts that have no hosted zone of their own: host => zone name to write their records into (e.g. a new *.staging host => staging.incertotech.com). Hosts not listed use the zone named exactly after them."
+  type        = map(string)
+  default     = {}
+}

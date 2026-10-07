@@ -69,6 +69,8 @@ module "edge" {
     "nest-to-do-api.incertotech.com",
     "nest-blog-api.incertotech.com",
     "nest-course-admin-api.incertotech.com",
+    "node-ecommerce.incertotech.com",
+    "django-blog.incertotech.com",
   ]
 }
 

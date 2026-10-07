@@ -1,0 +1,159 @@
+# node-ecommerce ("Akin's Classic Sneakers") — ONE pod: MongoDB as a native
+# sidecar + a one-shot seed step + the Express app. Same shape as the other apps
+# (see react-to-do/react-to-do.yaml for how native sidecars work).
+#
+# • mongo: official mongo:8.0, bound to localhost (only this pod talks to it),
+#   WiredTiger cache capped at 0.25 GB — uncapped it takes ~300 MB, too much for
+#   the shared small node.
+# • seed: runs after mongo is up; imports the demo catalogue/users/orders only
+#   when the products collection is empty, so restarts never duplicate data.
+#   Seed JSON comes from the node-ecommerce-seed ConfigMap (kustomization.yaml).
+# • web: the app. Secrets come from node-ecommerce-secrets (SESSION_SECRET,
+#   created on the cluster by k8s/ensure-secrets.sh, never in git) and the
+#   optional node-ecommerce-stripe secret (Stripe TEST keys; without it checkout
+#   shows an error page and everything else works).
+# • Product images are baked into the image; admin-uploaded images live on the
+#   container filesystem and reset on redeploy (fine for a demo).
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: node-ecommerce
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app: node-ecommerce
+  template:
+    metadata:
+      labels:
+        app: node-ecommerce
+    spec:
+      initContainers:
+      - name: mongo
+        image: mongo:8.0
+        restartPolicy: Always          # native sidecar
+        args: ["--bind_ip", "127.0.0.1", "--wiredTigerCacheSizeGB", "0.25"]
+        ports:
+        - containerPort: 27017
+        # Probes open a TCP connection with bash instead of running mongosh: mongosh
+        # is a ~150 MB Node process that would count against this container's
+        # memory limit on every probe, and is slow to start.
+        startupProbe:
+          exec:
+            command: ["bash", "-c", "exec 3<>/dev/tcp/127.0.0.1/27017"]
+          periodSeconds: 2
+          timeoutSeconds: 3
+          failureThreshold: 60
+        livenessProbe:
+          exec:
+            command: ["bash", "-c", "exec 3<>/dev/tcp/127.0.0.1/27017"]
+          periodSeconds: 20
+          timeoutSeconds: 3
+        volumeMounts:
+        - name: data
+          mountPath: /data/db
+        resources:
+          requests:
+            memory: "160Mi"
+            cpu: "25m"
+          limits:
+            memory: "400Mi"
+            cpu: "500m"
+      - name: seed
+        image: mongo:8.0
+        command:
+        - sh
+        - -c
+        - |
+          n=$(mongosh --quiet nodeEcommerce --eval 'db.products.countDocuments()')
+          if [ "$n" = "0" ]; then
+            for c in products users orders; do
+              mongoimport --db nodeEcommerce --collection "$c" --type json --jsonArray --file "/seed/${c}_init.json"
+            done
+          else
+            echo "catalogue already present ($n products); skipping seed"
+          fi
+        volumeMounts:
+        - name: seed
+          mountPath: /seed
+        resources:
+          limits:
+            memory: "384Mi"   # mongosh/mongoimport are Node/Go tools; short-lived, runs once per pod start
+      containers:
+      - name: web
+        image: node-ecommerce
+        env:
+        - name: NODE_ENV
+          value: production
+        - name: PORT
+          value: "3000"
+        - name: MONGODB_URL
+          value: mongodb://localhost:27017/nodeEcommerce
+        - name: SESSION_SECRET
+          valueFrom:
+            secretKeyRef:
+              name: node-ecommerce-secrets
+              key: SESSION_SECRET
+        - name: stripe_API_KEY
+          valueFrom:
+            secretKeyRef:
+              name: node-ecommerce-stripe
+              key: stripe_API_KEY
+              optional: true
+        - name: STRIPE_PUBLISHABLE_KEY
+          valueFrom:
+            secretKeyRef:
+              name: node-ecommerce-stripe
+              key: STRIPE_PUBLISHABLE_KEY
+              optional: true
+        ports:
+        - containerPort: 3000
+        readinessProbe:
+          httpGet:
+            path: /
+            port: 3000
+          initialDelaySeconds: 3
+          periodSeconds: 5
+        livenessProbe:
+          tcpSocket:
+            port: 3000
+          initialDelaySeconds: 20
+          periodSeconds: 15
+        resources:
+          requests:
+            memory: "64Mi"
+            cpu: "25m"
+          limits:
+            memory: "192Mi"
+            cpu: "500m"
+      volumes:
+      - name: data
+        persistentVolumeClaim:
+          claimName: node-ecommerce-mongo-data
+      - name: seed
+        configMap:
+          name: node-ecommerce-seed
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: node-ecommerce-mongo-data
+spec:
+  accessModes: ["ReadWriteOnce"]
+  resources:
+    requests:
+      storage: 1Gi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: node-ecommerce
+spec:
+  selector:
+    app: node-ecommerce
+  ports:
+  - name: web
+    port: 3000
+    targetPort: 3000

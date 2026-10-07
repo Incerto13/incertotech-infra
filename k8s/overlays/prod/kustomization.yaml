@@ -46,6 +46,12 @@ images:
   - name: nest-blog-api_server
     newName: incerto13/nest-blog-api_server
     newTag: prod-latest
+  - name: node-ecommerce
+    newName: incerto13/node-ecommerce
+    newTag: prod-latest
+  - name: django-blog
+    newName: incerto13/django-blog
+    newTag: prod-latest
 
 patches:
   # Rolling updates with a floating "-latest" tag only work if every rollout
@@ -60,7 +66,7 @@ patches:
         value: 2
   - target:
       kind: Deployment
-      name: homepage|react-electoral-map
+      name: homepage|react-electoral-map|node-ecommerce|django-blog
     patch: |-
       - op: add
         path: /spec/template/spec/containers/0/imagePullPolicy

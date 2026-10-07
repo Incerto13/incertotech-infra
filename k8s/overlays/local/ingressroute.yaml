@@ -109,3 +109,17 @@ spec:
       services:
         - name: nest-blog-api
           port: 3001
+
+    # node-ecommerce ("Akin's Classic Sneakers"): Express app on :3000
+    - kind: Rule
+      match: Host(`node-ecommerce.incertotech.local`)
+      services:
+        - name: node-ecommerce
+          port: 3000
+
+    # django-blog ("Tax Blog"): Django/gunicorn on :8000
+    - kind: Rule
+      match: Host(`django-blog.incertotech.local`)
+      services:
+        - name: django-blog
+          port: 8000

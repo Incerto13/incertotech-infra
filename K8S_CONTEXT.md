@@ -303,3 +303,36 @@ curl -sk --resolve react-to-do.incertotech.local:9443:127.0.0.1 https://react-to
   on the NLB with an ACM cert (`aws-load-balancer-ssl-cert` annotation) and
   delete cert-manager — same design incertotech now uses. Raised with the user;
   it's a separate project and their call.
+
+## 7. 2026-10-07: node-ecommerce + django-blog added to k8s
+
+- Both revived apps are now in `k8s/base/` as one pod each, same native-sidecar
+  pattern as the others:
+  - `node-ecommerce`: `mongo:8.0` sidecar (bound to localhost, `--wiredTigerCacheSizeGB 0.25`,
+    bash `/dev/tcp` probes — mongosh probes were slow and ~150 MB each), a `seed` init
+    container that `mongoimport`s the catalogue from the `node-ecommerce-seed` ConfigMap
+    only when `products` is empty, and the Express app on :3000. Optional
+    `node-ecommerce-stripe` secret for Stripe TEST keys.
+  - `django-blog`: `postgres:17-alpine` sidecar (`PGDATA` subdir), gunicorn on :8000,
+    entrypoint migrates + seeds. TCP probes (kubelet's Host header = pod IP, which
+    ALLOWED_HOSTS rejects).
+- Secrets: `k8s/ensure-secrets.sh <ns>` creates `node-ecommerce-secrets` (SESSION_SECRET)
+  and `django-blog-secrets` (DJANGO_SECRET_KEY, POSTGRES_PASSWORD) with random values if
+  missing; never in git. Run by `bin/start-local-k8s.sh` and by `k8s-deploy.yml` (uploaded
+  to S3 next to the manifest, run on the node via SSM before `incertotech-deploy`).
+- Hostnames: `node-ecommerce.` / `django-blog.` + `incertotech.local` | `staging.incertotech.com`
+  | `incertotech.com`, in all three IngressRoutes and both terraform edge roots. The two
+  new staging hosts have no hosted zone of their own; `modules/edge` gained
+  `zone_for_host` to write them into `staging.incertotech.com`. Prod hosts reuse the existing
+  legacy `node-ecommerce.incertotech.com` / `django-blog.incertotech.com` zones.
+- Images: `incerto13/node-ecommerce` and `incerto13/django-blog`, built for linux/amd64
+  (the Mac is arm64, the k3s node x86) with `docker buildx --platform linux/amd64 --push`.
+  No CI builds them yet.
+- Measured on minikube: node-ecommerce ~290 MB (web 168 + mongo 121), django-blog ~150 MB
+  (web 118 + postgres 31) per environment. **Both envs with all apps is tight on a 2 GB
+  t3.small** — measure on the real node after the first staging deploy before adding prod.
+- `bin/start-local-k8s.sh` now `rollout restart`s deployments after a full rebuild (same
+  `:local` tags hid new images; the homepage kept serving stale HTML).
+- Homepage: local `build.env` points the two tiles at the `.incertotech.local` hosts. The
+  homepage repo's staging/prod `ENVS` secrets must set `NODE_ECOMMERCE_URL` /
+  `DJANGO_BLOG_URL` to the staging/prod hosts (user edits secrets).
