@@ -17,7 +17,10 @@ variable "root_volume_gb" {
 }
 
 variable "github_repo" {
-  description = "GitHub repo (owner/name) whose Actions may assume the deploy role."
+  # The repo uses GitHub's immutable OIDC subject (owner@id/name@id), so the
+  # token's sub is "repo:Incerto13@41068072/incertotech-infra@826612883:...".
+  # Check with: gh api repos/<owner>/<repo>/actions/oidc/customization/sub
+  description = "GitHub repo, in the OIDC sub claim's form, whose Actions may assume the deploy role."
   type        = string
-  default     = "Incerto13/incertotech-infra"
+  default     = "Incerto13@41068072/incertotech-infra@826612883"
 }
