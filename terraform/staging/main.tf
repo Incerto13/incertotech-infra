@@ -38,9 +38,9 @@ variable "aws_profile" {
 }
 
 variable "cutover" {
-  description = "Set true (in terraform.tfvars or -var) to repoint staging DNS at CloudFront."
+  description = "Point staging DNS at CloudFront (k3s). Set false only together with restoring the compose A records."
   type        = bool
-  default     = false
+  default     = true
 }
 
 data "terraform_remote_state" "shared" {
