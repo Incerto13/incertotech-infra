@@ -1,0 +1,52 @@
+# homepage — static site (nginx:alpine) with links to every demo app.
+# The links are baked into index.html at BUILD time by expand-homepage-links.sh,
+# so the image is environment-specific (same as the docker-compose setup).
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: homepage
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: homepage
+  template:
+    metadata:
+      labels:
+        app: homepage
+    spec:
+      containers:
+      - name: homepage
+        image: homepage
+        ports:
+        - containerPort: 80
+        readinessProbe:
+          httpGet:
+            path: /
+            port: 80
+          initialDelaySeconds: 3
+          periodSeconds: 5
+        livenessProbe:
+          httpGet:
+            path: /
+            port: 80
+          initialDelaySeconds: 10
+          periodSeconds: 15
+        resources:
+          requests:
+            memory: "32Mi"
+            cpu: "10m"
+          limits:
+            memory: "128Mi"
+            cpu: "200m"
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: homepage
+spec:
+  selector:
+    app: homepage
+  ports:
+  - port: 80
+    targetPort: 80

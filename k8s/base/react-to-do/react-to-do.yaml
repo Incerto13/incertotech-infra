@@ -1,0 +1,155 @@
+# react-to-do — ONE pod per app: Postgres (seeded at first init) + NestJS
+# server + React web (nginx) run as containers of the same pod, exactly like
+# the app's own docker-compose project. Design rule for this portfolio
+# (K8S_CONTEXT.md §2): each demo app is at most one pod, databases live in
+# the pod, no RDS.
+#
+# ─────────────────────────── how the pod is wired ───────────────────────────
+# • postgres is a *native sidecar*: an initContainer with restartPolicy: Always.
+#   Kubernetes starts it first, waits for its startupProbe (pg_isready), and
+#   only then starts the app containers — so the server's dataSource.initialize()
+#   never races the database. It keeps running for the pod's whole life and is
+#   restarted if it dies. (Needs Kubernetes >= 1.29; minikube and k3s are well
+#   past that.)
+# • server reaches postgres on localhost: containers in a pod share a network
+#   namespace. The image bakes in docker/postgres/postgresql.conf (port 5433)
+#   and seed.sql (runs once on an empty data dir); data lives on a PVC mounted
+#   at the parent dir so it works for the postgres:16/17 layout
+#   (/var/lib/postgresql/data) and the postgres:18 layout (/var/lib/postgresql/<major>/docker).
+# • web is the React build served by nginx:alpine; its API base URL is baked in
+#   at build time (REACT_APP_TO_DO_SERVER_URL), so the image is per-environment.
+# • strategy Recreate: the volume is single-writer, never run two copies.
+# • One Service exposes both ports; the IngressRoute sends /api to 3001 and
+#   everything else to 80.
+#
+# Image names keep the underscore to match the Docker Hub repos; Kubernetes
+# names use dashes.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: react-to-do
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app: react-to-do
+  template:
+    metadata:
+      labels:
+        app: react-to-do
+    spec:
+      initContainers:
+      - name: postgres
+        image: react-to-do_postgres
+        restartPolicy: Always          # native sidecar
+        env:
+        - name: POSTGRES_DB
+          value: "react-to-do"
+        - name: POSTGRES_USER
+          value: postgres
+        - name: POSTGRES_PASSWORD
+          value: postgres
+        ports:
+        - containerPort: 5433
+        startupProbe:
+          exec:
+            command: ["pg_isready", "-U", "postgres", "-p", "5433"]
+          periodSeconds: 2
+          failureThreshold: 60        # up to 2 min for first-time seed
+        livenessProbe:
+          exec:
+            command: ["pg_isready", "-U", "postgres", "-p", "5433"]
+          periodSeconds: 20
+        volumeMounts:
+        - name: data
+          mountPath: /var/lib/postgresql
+        resources:
+          requests:
+            memory: "64Mi"
+            cpu: "25m"
+          limits:
+            memory: "256Mi"
+            cpu: "500m"
+      containers:
+      - name: server
+        image: react-to-do_server
+        env:
+        - name: REACT_TO_DO_TYPEORM_HOST
+          value: localhost
+        - name: REACT_TO_DO_POSTGRES_PORT
+          value: "5433"
+        ports:
+        - containerPort: 3001
+        readinessProbe:
+          tcpSocket:
+            port: 3001
+          initialDelaySeconds: 3
+          periodSeconds: 5
+        livenessProbe:
+          tcpSocket:
+            port: 3001
+          initialDelaySeconds: 30
+          periodSeconds: 15
+        resources:
+          requests:
+            memory: "96Mi"
+            cpu: "25m"
+          limits:
+            memory: "256Mi"
+            cpu: "500m"
+      - name: web
+        image: react-to-do_web
+        ports:
+        - containerPort: 80
+        readinessProbe:
+          httpGet:
+            path: /
+            port: 80
+          initialDelaySeconds: 2
+          periodSeconds: 5
+        livenessProbe:
+          httpGet:
+            path: /
+            port: 80
+          initialDelaySeconds: 10
+          periodSeconds: 15
+        resources:
+          requests:
+            memory: "16Mi"
+            cpu: "10m"
+          limits:
+            memory: "64Mi"
+            cpu: "200m"
+      volumes:
+      - name: data
+        persistentVolumeClaim:
+          claimName: react-to-do-postgres-data
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: react-to-do-postgres-data
+spec:
+  accessModes: ["ReadWriteOnce"]
+  resources:
+    requests:
+      storage: 1Gi
+  # storageClassName intentionally omitted — uses the cluster default
+  # (minikube: standard/hostpath, k3s: local-path).
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: react-to-do
+spec:
+  selector:
+    app: react-to-do
+  ports:
+  - name: web
+    port: 80
+    targetPort: 80
+  - name: api
+    port: 3001
+    targetPort: 3001

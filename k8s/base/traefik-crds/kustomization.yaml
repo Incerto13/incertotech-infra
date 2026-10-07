@@ -1,0 +1,10 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+# Traefik's cluster-scoped CRDs (IngressRoute, Middleware, ...). Applied by
+# ../traefik; kept separate so a second controller (e.g. a cloud one) can
+# share them. Vendored unmodified from the official reference manifest:
+# https://raw.githubusercontent.com/traefik/traefik/v3.7.9/docs/content/reference/dynamic-configuration/kubernetes-crd-definition-v1.yml
+# (same file techneip-infra vendors).
+resources:
+  - crds.yaml

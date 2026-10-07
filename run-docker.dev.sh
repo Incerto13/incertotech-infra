@@ -15,28 +15,28 @@ echo homepage is now running...
 cd ..
 
 # react-to-do
-cd react-to-do
+cd portfolio/react-to-do
 bash run-docker.dev.sh
 echo react-to-do is now running...
-cd ..
+cd ../..
 
 # react-electoral-map
-cd react-electoral-map
+cd portfolio/react-electoral-map
 bash run-docker.dev.sh
 echo react-electoral-map is now running...
-cd ..
+cd ../..
 
 # react-course-admin
-cd react-course-admin
+cd portfolio/react-course-admin
 bash run-docker.dev.sh
 echo react-course-admin is now running...
-cd ..
+cd ../..
 
 # nest-blog-api
-cd nest-blog-api
+cd portfolio/nest-blog-api
 bash run-docker.dev.sh
 echo nest-blog-api is now running...
-cd ..
+cd ../..
 
 # nginx proxy server is not needed (and won't work) in local dev
 

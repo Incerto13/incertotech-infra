@@ -1,0 +1,41 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+# LOCAL overlay — minikube profile "incertotech". Images are built straight
+# into minikube's docker daemon by bin/start-local-k8s.sh and tagged :local,
+# so nothing is pulled from Docker Hub.
+
+namespace: incertotech-local
+
+resources:
+  - namespace.yaml
+  - ../../base
+  - traefik-middlewares.yaml
+  - ingressroute.yaml
+
+images:
+  - name: homepage
+    newTag: local
+  - name: react-to-do_postgres
+    newTag: local
+  - name: react-to-do_server
+    newTag: local
+  - name: react-to-do_web
+    newTag: local
+  - name: react-electoral-map
+    newTag: local
+  - name: react-course-admin_postgres
+    newTag: local
+  - name: react-course-admin_server
+    newTag: local
+  - name: react-course-admin_web
+    newTag: local
+  - name: nest-blog-api_postgres
+    newTag: local
+  - name: nest-blog-api_server
+    newTag: local
+
+# No imagePullPolicy patch: the base sets none, so Kubernetes defaults to
+# IfNotPresent for the :local tags, which only exist inside minikube's docker
+# daemon (built by bin/start-local-k8s.sh). A missing image fails fast with
+# ImagePullBackOff instead of silently pulling something from Docker Hub.

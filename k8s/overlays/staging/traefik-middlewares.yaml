@@ -1,0 +1,28 @@
+# Traefik Middleware objects for the staging overlay (see ingressroute.yaml).
+# No Origin-stripping here: the Nest servers' CORS whitelist already contains
+# these real hostnames (see <app>/server/src/main.ts).
+
+# "/" -> "/docs" for the two REST API-docs hosts (nginx-proxy does this with
+# `proxy_pass http://...:81xx/docs/`). Only the bare root is redirected, so
+# Swagger's relative asset and docs-json fetches pass through untouched.
+# Traefik sits behind the ALB on plain HTTP, so the redirect is written with an
+# explicit https scheme rather than echoing the incoming one.
+apiVersion: traefik.io/v1alpha1
+kind: Middleware
+metadata:
+  name: redirect-root-to-docs
+spec:
+  redirectRegex:
+    regex: "^https?://([^/]+)/?$"
+    replacement: "https://${1}/docs"
+---
+# "/" -> "/graphql" for nest-blog-api (GraphQL playground). /rest and /graphql
+# pass through.
+apiVersion: traefik.io/v1alpha1
+kind: Middleware
+metadata:
+  name: redirect-root-to-graphql
+spec:
+  redirectRegex:
+    regex: "^https?://([^/]+)/?$"
+    replacement: "https://${1}/graphql"

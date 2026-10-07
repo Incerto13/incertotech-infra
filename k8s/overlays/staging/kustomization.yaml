@@ -1,0 +1,90 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+# STAGING overlay — scaffold only, NOT wired to any cluster or workflow yet.
+# Pulls the same Docker Hub images docker-compose.yml uses (incerto13/<name>:staging-latest)
+# so it can be dropped onto any cluster that has an nginx ingress controller
+# and a TLS secret named "incertotech-tls" (e.g. via cert-manager). The
+# existing EC2 + docker-compose deployment is untouched by this directory.
+
+namespace: incertotech-staging
+
+resources:
+  - namespace.yaml
+  - ../../base
+  - traefik-middlewares.yaml
+  - ingressroute.yaml
+
+images:
+  - name: homepage
+    newName: incerto13/homepage
+    newTag: staging-latest
+  - name: react-to-do_postgres
+    newName: incerto13/react-to-do_postgres
+    newTag: staging-latest
+  - name: react-to-do_server
+    newName: incerto13/react-to-do_server
+    newTag: staging-latest
+  - name: react-to-do_web
+    newName: incerto13/react-to-do_web
+    newTag: staging-latest
+  - name: react-electoral-map
+    newName: incerto13/react-electoral-map
+    newTag: staging-latest
+  - name: react-course-admin_postgres
+    newName: incerto13/react-course-admin_postgres
+    newTag: staging-latest
+  - name: react-course-admin_server
+    newName: incerto13/react-course-admin_server
+    newTag: staging-latest
+  - name: react-course-admin_web
+    newName: incerto13/react-course-admin_web
+    newTag: staging-latest
+  - name: nest-blog-api_postgres
+    newName: incerto13/nest-blog-api_postgres
+    newTag: staging-latest
+  - name: nest-blog-api_server
+    newName: incerto13/nest-blog-api_server
+    newTag: staging-latest
+
+patches:
+  # Rolling updates with a floating "-latest" tag only work if every rollout
+  # re-pulls. Keep two old ReplicaSets around for quick rollback.
+  # Every container of every pod, including the postgres native-sidecar
+  # initContainer. Listed per Deployment because JSON patch paths are indexed.
+  - target:
+      kind: Deployment
+    patch: |-
+      - op: add
+        path: /spec/revisionHistoryLimit
+        value: 2
+  - target:
+      kind: Deployment
+      name: homepage|react-electoral-map
+    patch: |-
+      - op: add
+        path: /spec/template/spec/containers/0/imagePullPolicy
+        value: Always
+  - target:
+      kind: Deployment
+      name: react-to-do|react-course-admin
+    patch: |-
+      - op: add
+        path: /spec/template/spec/initContainers/0/imagePullPolicy
+        value: Always
+      - op: add
+        path: /spec/template/spec/containers/0/imagePullPolicy
+        value: Always
+      - op: add
+        path: /spec/template/spec/containers/1/imagePullPolicy
+        value: Always
+  - target:
+      kind: Deployment
+      name: nest-blog-api
+    patch: |-
+      - op: add
+        path: /spec/template/spec/initContainers/0/imagePullPolicy
+        value: Always
+      - op: add
+        path: /spec/template/spec/containers/0/imagePullPolicy
+        value: Always

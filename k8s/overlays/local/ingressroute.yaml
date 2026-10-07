@@ -1,0 +1,111 @@
+# Local routing — one host per demo app on *.incertotech.local, mirroring the
+# nginx-proxy server blocks in nginx/default.conf-<env>.
+#
+# Traefik IngressRoute (not core Ingress) — same choice as techneip-infra, whose
+# cluster hit a Traefik bug where core Ingress never matched. Longer rules get
+# higher priority automatically, so `Host && PathPrefix(/api)` beats `Host`, and
+# `Host && Path(/)` beats both.
+#
+# Requires: k8s/base/traefik applied, TLS secret "incertotech-tls" (created by
+# bin/start-local-k8s.sh from mkcert), /etc/hosts entries, `minikube tunnel`.
+# http -> https is done by the Traefik entrypoint (see base/traefik).
+apiVersion: traefik.io/v1alpha1
+kind: IngressRoute
+metadata:
+  name: incertotech-routes
+spec:
+  entryPoints:
+    - websecure
+  tls:
+    secretName: incertotech-tls
+  routes:
+    # homepage
+    - kind: Rule
+      match: Host(`incertotech.local`)
+      services:
+        - name: homepage
+          port: 80
+
+    # react-to-do: /api -> nest server, everything else -> react build
+    - kind: Rule
+      match: Host(`react-to-do.incertotech.local`) && PathPrefix(`/api`)
+      middlewares:
+        - name: strip-origin
+      services:
+        - name: react-to-do
+          port: 3001
+    - kind: Rule
+      match: Host(`react-to-do.incertotech.local`)
+      services:
+        - name: react-to-do
+          port: 80
+
+    # react-electoral-map: static only
+    - kind: Rule
+      match: Host(`react-electoral-map.incertotech.local`)
+      services:
+        - name: react-electoral-map
+          port: 80
+
+    # react-course-admin: /api -> nest server, everything else -> react build
+    - kind: Rule
+      match: Host(`react-course-admin.incertotech.local`) && PathPrefix(`/api`)
+      middlewares:
+        - name: strip-origin
+      services:
+        - name: react-course-admin
+          port: 3001
+    - kind: Rule
+      match: Host(`react-course-admin.incertotech.local`)
+      services:
+        - name: react-course-admin
+          port: 80
+
+    # API-docs hosts: "/" redirects to /docs, everything else passes through.
+    # The redirect route still needs a service (schema requirement); it is
+    # never reached because the middleware answers with a 3xx first.
+    - kind: Rule
+      match: Host(`nest-to-do-api.incertotech.local`) && Path(`/`)
+      middlewares:
+        - name: redirect-root-to-docs
+      services:
+        - name: react-to-do
+          port: 3001
+    - kind: Rule
+      match: Host(`nest-to-do-api.incertotech.local`)
+      middlewares:
+        - name: strip-origin
+      services:
+        - name: react-to-do
+          port: 3001
+
+    - kind: Rule
+      match: Host(`nest-course-admin-api.incertotech.local`) && Path(`/`)
+      middlewares:
+        - name: redirect-root-to-docs
+      services:
+        - name: react-course-admin
+          port: 3001
+    - kind: Rule
+      match: Host(`nest-course-admin-api.incertotech.local`)
+      middlewares:
+        - name: strip-origin
+      services:
+        - name: react-course-admin
+          port: 3001
+
+    # nest-blog-api: "/" -> GraphQL playground; /rest and /graphql pass through
+    - kind: Rule
+      match: Host(`nest-blog-api.incertotech.local`) && Path(`/`)
+      middlewares:
+        - name: redirect-root-to-graphql
+      services:
+        - name: nest-blog-api
+          port: 3001
+    - kind: Rule
+      match: Host(`nest-blog-api.incertotech.local`)
+      middlewares:
+        - name: strip-origin
+      services:
+        - name: nest-blog-api
+          port: 3001

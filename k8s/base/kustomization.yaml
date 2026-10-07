@@ -1,0 +1,23 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+# Base manifests for every incertotech demo app. Environment-specific concerns
+# (namespace, image registry/tag, ingress hostnames, TLS) live in overlays/.
+#
+# Image names here are bare (e.g. "react-to-do_web") and match the Docker Hub
+# repo names used by docker-compose.yml. Each overlay rewrites them via the
+# `images:` transformer to either a local tag (minikube) or incerto13/<name>:<env>-latest.
+#
+# Namespace is intentionally NOT set here — each overlay sets its own.
+
+resources:
+  - homepage/homepage.yaml
+  - react-to-do/react-to-do.yaml
+  - react-electoral-map/react-electoral-map.yaml
+  - react-course-admin/react-course-admin.yaml
+  - nest-blog-api/nest-blog-api.yaml
+
+labels:
+  - pairs:
+      app.kubernetes.io/part-of: incertotech
+    includeSelectors: false
