@@ -3,7 +3,7 @@
 # Postgres, runs migrations, and seeds the demo posts/users on an empty DB.
 #
 # Secrets (DJANGO_SECRET_KEY, POSTGRES_PASSWORD) come from django-blog-secrets,
-# created on the cluster by k8s/ensure-secrets.sh, never in git.
+# generated per overlay from SOPS-encrypted files (k8s/overlays/<env>/secrets/).
 # ALLOWED_HOSTS / CSRF_TRUSTED_ORIGINS defaults in settings.py already cover
 # django-blog.{incertotech.com, staging.incertotech.com, incertotech.local}.
 # Probes are TCP, not HTTP: kubelet's Host header is the pod IP, which Django's

@@ -252,8 +252,9 @@ curl -sk --resolve react-to-do.incertotech.local:9443:127.0.0.1 https://react-to
    Deploy workflow `.github/workflows/k8s-deploy.yml` (staging/prod dropdown, defaults to staging; prod only runs from main) + `k8s/base/traefik-cloud`
    are written. User paused 2026-10-04 to tweak the apps and test locally
    first; next action when they return: `terraform -chdir=terraform/shared
-   apply`, then plan/apply staging + production (cutover=false), set the three
-   repo variables the workflow needs, run the workflow for staging, test via
+   apply`, then plan/apply staging + production (cutover=false), set the
+   `SOPS_AGE_KEY` repo secret (the only per-repo setting; the workflow
+   hardcodes the role ARN and looks up the k3s instance/bucket by tag/name), run the workflow for staging, test via
    the CloudFront domain with a Host header, then cutover staging, then prod.
    Design of what the terraform builds:
    EC2 t3.small + Elastic IP + security group (22 from user IP, 80 from
@@ -316,10 +317,22 @@ curl -sk --resolve react-to-do.incertotech.local:9443:127.0.0.1 https://react-to
   - `django-blog`: `postgres:17-alpine` sidecar (`PGDATA` subdir), gunicorn on :8000,
     entrypoint migrates + seeds. TCP probes (kubelet's Host header = pod IP, which
     ALLOWED_HOSTS rejects).
-- Secrets: `k8s/ensure-secrets.sh <ns>` creates `node-ecommerce-secrets` (SESSION_SECRET)
-  and `django-blog-secrets` (DJANGO_SECRET_KEY, POSTGRES_PASSWORD) with random values if
-  missing; never in git. Run by `bin/start-local-k8s.sh` and by `k8s-deploy.yml` (uploaded
-  to S3 next to the manifest, run on the node via SSM before `incertotech-deploy`).
+- Secrets: **SOPS + age, same layout as techneip-infra but a separate incertotech key.**
+  `k8s/overlays/{staging,prod}/secrets/<app>.enc.env` are committed encrypted (values
+  only; KEY names readable). Each overlay's `secretGenerator` builds
+  `node-ecommerce-secrets` (SESSION_SECRET, stripe_API_KEY, STRIPE_PUBLISHABLE_KEY — Stripe
+  empty = payments off) and `django-blog-secrets` (DJANGO_SECRET_KEY, POSTGRES_PASSWORD)
+  from the decrypted `secrets/*.env`, which are gitignored and exist only just-in-time.
+  Local overlay secrets are plain committed dev values. Private key:
+  `~/.config/sops/age/incertotech-keys.txt` (NOT `keys.txt` = modern-age's key, nor
+  `techneip-keys.txt` = techneip's); public key in `k8s/.sops.yaml`; CI reads it from the `SOPS_AGE_KEY` Actions
+  secret on Incerto13/incertotech-infra. `make secrets-edit env=staging app=django-blog`,
+  `make secrets-decrypt|secrets-clean env=…`; `make local-k8s-render env=staging|prod`
+  decrypts/cleans automatically. The deploy workflow decrypts → renders → uploads → applies,
+  then shreds the plaintext and **deletes the rendered manifest from S3** (it contains the
+  Secrets); the artifacts bucket also expires objects/noncurrent versions after 1 day
+  (`aws_s3_bucket_lifecycle_configuration`, deploy role got `s3:DeleteObject`).
+  POSTGRES_PASSWORD must not change once a DB is initialised (Postgres keeps the old one).
 - Hostnames: `node-ecommerce.` / `django-blog.` + `incertotech.local` | `staging.incertotech.com`
   | `incertotech.com`, in all three IngressRoutes and both terraform edge roots. The two
   new staging hosts have no hosted zone of their own; `modules/edge` gained
@@ -334,5 +347,6 @@ curl -sk --resolve react-to-do.incertotech.local:9443:127.0.0.1 https://react-to
 - `bin/start-local-k8s.sh` now `rollout restart`s deployments after a full rebuild (same
   `:local` tags hid new images; the homepage kept serving stale HTML).
 - Homepage: local `build.env` points the two tiles at the `.incertotech.local` hosts. The
-  homepage repo's staging/prod `ENVS` secrets must set `NODE_ECOMMERCE_URL` /
-  `DJANGO_BLOG_URL` to the staging/prod hosts (user edits secrets).
+  homepage repo no longer uses the `STAGING_ENVS`/`PROD_ENVS` Actions secrets: its link
+  URLs are public, so they're committed as `homepage/envs/{staging,prod}.env` and the
+  workflows `cp` them to `.env` (those two GitHub secrets can be deleted).

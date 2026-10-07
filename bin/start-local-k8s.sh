@@ -88,8 +88,6 @@ if $HAS_MKCERT; then
     --dry-run=client -o yaml | $KC apply -f - >/dev/null
   ok "TLS secret incertotech-tls applied"
 fi
-# App secrets (session/secret keys, DB passwords): random, created once, never in git.
-KC="$KC" "$ROOT/k8s/ensure-secrets.sh" "$NAMESPACE" | while read -r line; do ok "$line"; done
 
 # ── 4. images ───────────────────────────────────────────────────────────────
 header "4/7 Images"

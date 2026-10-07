@@ -1,0 +1,23 @@
+# SOPS encryption rules (same layout as techneip-infra, separate key).
+#
+# Staging/prod secret env files are committed ENCRYPTED as *.enc.env; the
+# plaintext *.env files are gitignored and only ever exist briefly, produced by
+# `sops -d` (in CI by k8s-deploy.yml just before `kustomize build`, locally via
+# `make secrets-decrypt env=...` when you need to inspect them).
+#
+# Recipient: the incertotech-dedicated age PUBLIC key below. The matching
+# PRIVATE key lives at ~/.config/sops/age/incertotech-keys.txt (point sops at it
+# with SOPS_AGE_KEY_FILE; the Makefile does) and in CI as the SOPS_AGE_KEY
+# GitHub Actions secret on Incerto13/incertotech-infra. Not keys.txt (that's
+# modern-age's key) or techneip-keys.txt (techneip's).
+#
+# dotenv files: values are encrypted, KEY= names stay readable so diffs show
+# which variable changed.
+creation_rules:
+  - path_regex: overlays/(staging|prod)/secrets/.*\.enc\.env$
+    age: age1uylde43sju329kvfz9j8z9wywwwrspgxzpf0cukrwnjr057vy32qctpky2
+
+  # Local development secrets are committed in plain text (dummy values that
+  # only ever run on minikube): encrypt no values.
+  - path_regex: overlays/local/secrets/.*\.env$
+    encrypted_regex: "^$"

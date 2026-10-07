@@ -8,10 +8,9 @@
 # • seed: runs after mongo is up; imports the demo catalogue/users/orders only
 #   when the products collection is empty, so restarts never duplicate data.
 #   Seed JSON comes from the node-ecommerce-seed ConfigMap (kustomization.yaml).
-# • web: the app. Secrets come from node-ecommerce-secrets (SESSION_SECRET,
-#   created on the cluster by k8s/ensure-secrets.sh, never in git) and the
-#   optional node-ecommerce-stripe secret (Stripe TEST keys; without it checkout
-#   shows an error page and everything else works).
+# • web: the app. Secrets come from node-ecommerce-secrets, generated per overlay
+#   from SOPS-encrypted files (k8s/overlays/<env>/secrets/): SESSION_SECRET, plus
+#   Stripe TEST keys (empty = checkout shows "payments not configured").
 # • Product images are baked into the image; admin-uploaded images live on the
 #   container filesystem and reset on redeploy (fine for a demo).
 apiVersion: apps/v1
@@ -99,13 +98,13 @@ spec:
         - name: stripe_API_KEY
           valueFrom:
             secretKeyRef:
-              name: node-ecommerce-stripe
+              name: node-ecommerce-secrets
               key: stripe_API_KEY
               optional: true
         - name: STRIPE_PUBLISHABLE_KEY
           valueFrom:
             secretKeyRef:
-              name: node-ecommerce-stripe
+              name: node-ecommerce-secrets
               key: STRIPE_PUBLISHABLE_KEY
               optional: true
         ports:

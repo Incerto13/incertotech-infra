@@ -94,3 +94,15 @@ patches:
       - op: add
         path: /spec/template/spec/containers/0/imagePullPolicy
         value: Always
+
+# App secrets, built from secrets/*.env. For staging/prod those files are the
+# SOPS-decrypted copies of secrets/*.enc.env (decrypted just-in-time by
+# k8s-deploy.yml / `make secrets-decrypt`); for local they're committed dev values.
+# The name hash suffix makes pods roll automatically when a secret changes.
+secretGenerator:
+  - name: node-ecommerce-secrets
+    envs:
+      - secrets/node-ecommerce.env
+  - name: django-blog-secrets
+    envs:
+      - secrets/django-blog.env

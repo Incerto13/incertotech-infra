@@ -43,3 +43,15 @@ images:
 # IfNotPresent for the :local tags, which only exist inside minikube's docker
 # daemon (built by bin/start-local-k8s.sh). A missing image fails fast with
 # ImagePullBackOff instead of silently pulling something from Docker Hub.
+
+# App secrets, built from secrets/*.env. For staging/prod those files are the
+# SOPS-decrypted copies of secrets/*.enc.env (decrypted just-in-time by
+# k8s-deploy.yml / `make secrets-decrypt`); for local they're committed dev values.
+# The name hash suffix makes pods roll automatically when a secret changes.
+secretGenerator:
+  - name: node-ecommerce-secrets
+    envs:
+      - secrets/node-ecommerce.env
+  - name: django-blog-secrets
+    envs:
+      - secrets/django-blog.env

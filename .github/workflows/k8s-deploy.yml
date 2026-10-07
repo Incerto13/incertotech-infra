@@ -5,16 +5,18 @@
 #
 # How it works — no AWS keys, no SSH key, no kubeconfig in GitHub:
 #   1. assume the incertotech-github-deploy IAM role via GitHub OIDC
-#   2. render k8s/base/traefik-cloud + k8s/overlays/<env> with kustomize
+#   2. decrypt k8s/overlays/<env>/secrets/*.enc.env with SOPS (age key from the
+#      SOPS_AGE_KEY secret), render k8s/base/traefik-cloud + the overlay
 #   3. upload the rendered manifest to the deploy-artifacts S3 bucket
 #   4. ask SSM Run Command to execute `incertotech-deploy <s3 uri>` on the
 #      node, which applies it and waits for the rollout
 #
-# Repository variables (Settings -> Secrets and variables -> Actions -> Variables),
-# all from `terraform -chdir=terraform/shared output`:
-#   AWS_ROLE_ARN      github_deploy_role_arn
-#   DEPLOY_BUCKET     artifacts_bucket
-#   K3S_INSTANCE_ID   instance_id
+# Nothing to configure per repo except the SOPS_AGE_KEY secret: the deploy role
+# ARN is fixed (created by terraform/shared), and the k3s instance + artifacts
+# bucket are looked up at run time by their terraform-managed name/tag.
+# Repository secret: SOPS_AGE_KEY = contents of ~/.config/sops/age/incertotech-keys.txt
+# The rendered manifest contains the decrypted Secrets, so it is deleted from S3
+# right after the apply (and the bucket expires old object versions).
 name: "K8s: Deploy"
 run-name: "K8s deploy → ${{ inputs.env }} (${{ github.ref_name }})"
 
@@ -54,7 +56,7 @@ jobs:
       - name: Configure AWS credentials (OIDC)
         uses: aws-actions/configure-aws-credentials@v4
         with:
-          role-to-assume: ${{ vars.AWS_ROLE_ARN }}
+          role-to-assume: arn:aws:iam::249107242695:role/incertotech-github-deploy
           aws-region: us-east-1
 
       - name: Install kustomize
@@ -64,6 +66,38 @@ jobs:
             "https://github.com/kubernetes-sigs/kustomize/releases/download/kustomize%2Fv${KUSTOMIZE_VERSION}/kustomize_v${KUSTOMIZE_VERSION}_linux_amd64.tar.gz"
           tar -xzf kustomize.tar.gz && sudo mv kustomize /usr/local/bin/ && rm kustomize.tar.gz
           kustomize version
+
+      - name: Find the k3s node and artifacts bucket
+        id: target
+        run: |
+          instance_id=$(aws ec2 describe-instances \
+            --filters Name=tag:Name,Values=incertotech-k3s Name=instance-state-name,Values=running \
+            --query 'Reservations[0].Instances[0].InstanceId' --output text)
+          if [ -z "$instance_id" ] || [ "$instance_id" = "None" ]; then
+            echo "::error::No running EC2 instance tagged Name=incertotech-k3s (terraform/shared applied?)"; exit 1
+          fi
+          account=$(aws sts get-caller-identity --query Account --output text)
+          echo "instance_id=$instance_id" >> "$GITHUB_OUTPUT"
+          echo "bucket=incertotech-deploy-artifacts-${account}" >> "$GITHUB_OUTPUT"
+          echo "k3s node: $instance_id"
+
+      - name: Install SOPS
+        run: |
+          SOPS_VERSION=3.11.0
+          for i in 1 2 3; do
+            curl -fsSL -o sops "https://github.com/getsops/sops/releases/download/v${SOPS_VERSION}/sops-v${SOPS_VERSION}.linux.amd64" && break
+            echo "sops download retry $i failed"; sleep 5
+          done
+          chmod +x sops && sudo mv sops /usr/local/bin/ && sops --version
+
+      - name: Decrypt secrets
+        env:
+          SOPS_AGE_KEY: ${{ secrets.SOPS_AGE_KEY }}
+        run: |
+          for enc in k8s/overlays/${{ inputs.env }}/secrets/*.enc.env; do
+            sops decrypt --input-type dotenv --output-type dotenv "$enc" > "${enc%.enc.env}.env"
+          done
+          ls k8s/overlays/${{ inputs.env }}/secrets/
 
       - name: Render manifests
         run: |
@@ -77,34 +111,27 @@ jobs:
       - name: Upload to S3
         id: upload
         run: |
-          prefix="s3://${{ vars.DEPLOY_BUCKET }}/${{ inputs.env }}/${GITHUB_SHA}-${GITHUB_RUN_ID}"
+          prefix="s3://${{ steps.target.outputs.bucket }}/${{ inputs.env }}/${GITHUB_SHA}-${GITHUB_RUN_ID}"
           aws s3 cp rendered.yaml "${prefix}.yaml"
-          aws s3 cp k8s/ensure-secrets.sh "${prefix}-ensure-secrets.sh"
           echo "uri=${prefix}.yaml" >> "$GITHUB_OUTPUT"
-          echo "secrets_uri=${prefix}-ensure-secrets.sh" >> "$GITHUB_OUTPUT"
 
       - name: Apply on the node via SSM
         env:
-          NAMESPACE: incertotech-${{ inputs.env }}
           MANIFEST_URI: ${{ steps.upload.outputs.uri }}
-          SECRETS_URI: ${{ steps.upload.outputs.secrets_uri }}
         run: |
-          # 1) create the app secrets in the namespace if missing (random values,
-          #    created once on the node, never in git), 2) apply + wait for rollout.
+          # Apply the rendered manifest on the node and wait for the rollout.
           python3 - <<'PY'
           import json, os
-          ns, manifest, script = os.environ["NAMESPACE"], os.environ["MANIFEST_URI"], os.environ["SECRETS_URI"]
+          manifest = os.environ["MANIFEST_URI"]
           commands = [
               "set -e",
               "export KUBECONFIG=/etc/rancher/k3s/k3s.yaml",
-              f"aws s3 cp {script} /tmp/ensure-secrets.sh",
-              f"sh /tmp/ensure-secrets.sh {ns}",
               f"/usr/local/bin/incertotech-deploy {manifest}",
           ]
           json.dump({"commands": commands, "executionTimeout": ["900"]}, open("ssm-params.json", "w"))
           PY
           cmd_id=$(aws ssm send-command \
-            --instance-ids "${{ vars.K3S_INSTANCE_ID }}" \
+            --instance-ids "${{ steps.target.outputs.instance_id }}" \
             --document-name AWS-RunShellScript \
             --comment "k8s-deploy ${{ inputs.env }} ${GITHUB_SHA::7}" \
             --parameters file://ssm-params.json \
@@ -113,7 +140,7 @@ jobs:
           # poll until the command finishes, then surface its output
           for _ in $(seq 1 90); do
             status=$(aws ssm get-command-invocation --command-id "$cmd_id" \
-              --instance-id "${{ vars.K3S_INSTANCE_ID }}" --query Status --output text 2>/dev/null || echo Pending)
+              --instance-id "${{ steps.target.outputs.instance_id }}" --query Status --output text 2>/dev/null || echo Pending)
             case "$status" in
               Success) break ;;
               Pending|InProgress|Delayed) sleep 10 ;;
@@ -121,6 +148,16 @@ jobs:
             esac
           done
           aws ssm get-command-invocation --command-id "$cmd_id" \
-            --instance-id "${{ vars.K3S_INSTANCE_ID }}" \
+            --instance-id "${{ steps.target.outputs.instance_id }}" \
             --query '{Status:Status,Stdout:StandardOutputContent,Stderr:StandardErrorContent}' --output json \
             | python3 -c 'import sys,json; d=json.load(sys.stdin); print(d["Stdout"]); print(d["Stderr"], file=sys.stderr); sys.exit(0 if d["Status"]=="Success" else 1)'
+
+      - name: Remove decrypted secrets
+        if: always()
+        run: |
+          find k8s/overlays/${{ inputs.env }}/secrets -name '*.env' ! -name '*.enc.env' -exec shred -u {} +
+          rm -f rendered.yaml
+          if [ -n "${{ steps.upload.outputs.uri }}" ]; then
+            aws s3 rm "${{ steps.upload.outputs.uri }}"
+          fi
+

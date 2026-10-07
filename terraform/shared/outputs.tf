@@ -21,6 +21,6 @@ output "artifacts_bucket" {
 }
 
 output "github_deploy_role_arn" {
-  description = "Set as the AWS_ROLE_ARN repository variable; workflows assume it via OIDC."
+  description = "Assumed by .github/workflows/k8s-deploy.yml via GitHub OIDC (ARN is hardcoded there)."
   value       = aws_iam_role.github_deploy.arn
 }

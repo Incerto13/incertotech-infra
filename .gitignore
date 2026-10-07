@@ -19,3 +19,9 @@
 
 # large local media (Project Storm screen recordings), not for git
 /Screen-Recording GIFs/
+
+# k8s secrets: only SOPS-encrypted *.enc.env are committed for staging/prod;
+# decrypted copies (made just-in-time) must never be. Local dev values are plain.
+/k8s/overlays/staging/secrets/*.env
+/k8s/overlays/prod/secrets/*.env
+!/k8s/overlays/*/secrets/*.enc.env

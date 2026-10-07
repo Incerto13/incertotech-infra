@@ -87,6 +87,24 @@ resource "aws_s3_bucket_versioning" "artifacts" {
   }
 }
 
+# Rendered manifests contain decrypted Secrets: the deploy workflow deletes each
+# one after applying it; this expires any leftover/noncurrent versions too.
+resource "aws_s3_bucket_lifecycle_configuration" "artifacts" {
+  bucket = aws_s3_bucket.artifacts.id
+
+  rule {
+    id     = "expire-deploy-manifests"
+    status = "Enabled"
+    filter {}
+    expiration {
+      days = 1
+    }
+    noncurrent_version_expiration {
+      noncurrent_days = 1
+    }
+  }
+}
+
 resource "aws_s3_bucket_public_access_block" "artifacts" {
   bucket                  = aws_s3_bucket.artifacts.id
   block_public_acls       = true
@@ -207,9 +225,10 @@ resource "aws_iam_role" "github_deploy" {
 }
 
 data "aws_iam_policy_document" "github_deploy" {
-  # upload the rendered manifest
+  # upload the rendered manifest, and delete it after the apply (it contains
+  # the decrypted Kubernetes Secrets)
   statement {
-    actions   = ["s3:PutObject"]
+    actions   = ["s3:PutObject", "s3:DeleteObject"]
     resources = ["${aws_s3_bucket.artifacts.arn}/*"]
   }
   # run `incertotech-deploy` on the node and read the result

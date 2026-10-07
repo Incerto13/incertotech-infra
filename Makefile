@@ -51,7 +51,29 @@ local-k8s-diff: _ensure-local-ctx          ## show what apply would change
 	$(KCB) diff -k k8s/overlays/local || true
 
 local-k8s-render:           ## print rendered manifests for an overlay (env=local|staging|prod)
-	kustomize build k8s/overlays/$(or $(env),local)
+	@e=$(or $(env),local); \
+	if [ "$$e" != local ]; then $(MAKE) -s secrets-decrypt env=$$e; fi; \
+	kustomize build k8s/overlays/$$e; rc=$$?; \
+	if [ "$$e" != local ]; then $(MAKE) -s secrets-clean env=$$e; fi; exit $$rc
+
+# ── SOPS secrets (staging/prod) ─────────────────────────────────────────────
+# Encrypted files: k8s/overlays/<env>/secrets/<app>.enc.env, age key at
+# ~/.config/sops/age/incertotech-keys.txt (not keys.txt = modern-age, not techneip-keys.txt).
+SOPS := SOPS_AGE_KEY_FILE=$(HOME)/.config/sops/age/incertotech-keys.txt sops
+
+secrets-edit:               ## edit encrypted secrets in $$EDITOR: make secrets-edit env=staging app=django-blog
+	@[ -n "$(env)" ] && [ -n "$(app)" ] || (echo "usage: make secrets-edit env=staging|prod app=node-ecommerce|django-blog" && exit 1)
+	cd k8s && $(SOPS) edit --input-type dotenv --output-type dotenv overlays/$(env)/secrets/$(app).enc.env
+
+secrets-decrypt:            ## write plaintext secrets/*.env (gitignored) for env=staging|prod
+	@[ -n "$(env)" ] || (echo "usage: make secrets-decrypt env=staging|prod" && exit 1)
+	@for enc in k8s/overlays/$(env)/secrets/*.enc.env; do \
+		$(SOPS) decrypt --input-type dotenv --output-type dotenv "$$enc" > "$${enc%.enc.env}.env"; \
+	done
+
+secrets-clean:              ## remove decrypted plaintext secrets for env=staging|prod
+	@[ -n "$(env)" ] || (echo "usage: make secrets-clean env=staging|prod" && exit 1)
+	@find k8s/overlays/$(env)/secrets -name '*.env' ! -name '*.enc.env' -delete
 
 local-k8s-status: _ensure-local-ctx
 	$(KC) get pods,svc,ingressroute,middleware,pvc
