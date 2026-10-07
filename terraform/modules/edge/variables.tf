@@ -4,7 +4,7 @@ variable "env" {
 }
 
 variable "hosts" {
-  description = "All public hostnames for this environment. The first is the certificate's primary name. Each must have its own Route53 hosted zone."
+  description = "All public hostnames for this environment. The first is the certificate's primary name."
   type        = list(string)
 
   validation {
@@ -18,14 +18,19 @@ variable "origin_dns_name" {
   type        = string
 }
 
+variable "zone_id" {
+  description = "Route53 zone every record is written into (the incertotech.com apex, from ../../dns)."
+  type        = string
+}
+
 variable "cutover" {
-  description = "false: build cert + CloudFront only, leave the live A records alone. true: repoint every hostname at CloudFront."
+  description = "false: hosts point at legacy_ipv4 (the docker-compose instance). true: hosts point at CloudFront."
   type        = bool
   default     = false
 }
 
-variable "zone_for_host" {
-  description = "Hosts that have no hosted zone of their own: host => zone name to write their records into (e.g. a new *.staging host => staging.incertotech.com). Hosts not listed use the zone named exactly after them."
-  type        = map(string)
-  default     = {}
+variable "legacy_ipv4" {
+  description = "The docker-compose instance's public IP, used while cutover = false. null: no A records before cutover."
+  type        = string
+  default     = null
 }

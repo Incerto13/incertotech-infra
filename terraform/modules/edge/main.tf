@@ -7,13 +7,11 @@
 # (the node's security group admits CloudFront's ranges only) and forwards the
 # viewer's Host header so Traefik can route by hostname.
 #
-# DNS: most incertotech hostnames have their OWN hosted zone (the account was set
-# up that way; the user chose to keep it), so ACM validation CNAMEs and alias
-# records go into the zone named exactly after each host. Hosts without one
-# (newer apps) are mapped to a parent zone via var.zone_for_host.
-# Alias records are gated by var.cutover — until it is true the existing A
-# records keep pointing at the docker-compose instances and nothing changes
-# for visitors.
+# DNS: every record goes into one zone, var.zone_id — the incertotech.com apex
+# (../../dns). Each host gets an A record that points at the compose instance
+# (var.legacy_ipv4) while cutover = false and at CloudFront once it is true;
+# flipping it back is a real rollback. AAAA records exist only after cutover
+# (the compose instances have no IPv6).
 
 terraform {
   required_providers {
@@ -26,11 +24,6 @@ terraform {
 
 locals {
   apex = var.hosts[0]
-}
-
-data "aws_route53_zone" "host" {
-  for_each = toset(var.hosts)
-  name     = "${lookup(var.zone_for_host, each.value, each.value)}."
 }
 
 # ───────────────────────────── certificate ─────────────────────────────
@@ -48,7 +41,7 @@ resource "aws_acm_certificate" "this" {
   tags = { Name = "incertotech-${var.env}" }
 }
 
-resource "aws_route53_record" "validation" {
+resource "aws_route53_record" "acm_validation" {
   for_each = {
     for dvo in aws_acm_certificate.this.domain_validation_options :
     dvo.domain_name => {
@@ -58,7 +51,7 @@ resource "aws_route53_record" "validation" {
     }
   }
 
-  zone_id         = data.aws_route53_zone.host[each.key].zone_id
+  zone_id         = var.zone_id
   name            = each.value.name
   type            = each.value.type
   ttl             = 300
@@ -68,7 +61,7 @@ resource "aws_route53_record" "validation" {
 
 resource "aws_acm_certificate_validation" "this" {
   certificate_arn         = aws_acm_certificate.this.arn
-  validation_record_fqdns = [for r in aws_route53_record.validation : r.fqdn]
+  validation_record_fqdns = [for r in aws_route53_record.acm_validation : r.fqdn]
 }
 
 # ───────────────────────────── CloudFront ─────────────────────────────
@@ -128,30 +121,35 @@ resource "aws_cloudfront_distribution" "this" {
   tags = { Name = "incertotech-${var.env}" }
 }
 
-# ───────────────────────────── DNS cutover ─────────────────────────────
+# ───────────────────────────── DNS ─────────────────────────────
 
-resource "aws_route53_record" "alias" {
-  for_each = var.cutover ? toset(var.hosts) : toset([])
+resource "aws_route53_record" "a" {
+  for_each = var.cutover || var.legacy_ipv4 != null ? toset(var.hosts) : toset([])
 
-  zone_id = data.aws_route53_zone.host[each.value].zone_id
+  zone_id = var.zone_id
   name    = each.value
   type    = "A"
 
-  alias {
-    name                   = aws_cloudfront_distribution.this.domain_name
-    zone_id                = aws_cloudfront_distribution.this.hosted_zone_id
-    evaluate_target_health = false
+  # before cutover (and on rollback): the docker-compose instance
+  ttl     = var.cutover ? null : 300
+  records = var.cutover ? null : [var.legacy_ipv4]
+
+  dynamic "alias" {
+    for_each = var.cutover ? [1] : []
+    content {
+      name                   = aws_cloudfront_distribution.this.domain_name
+      zone_id                = aws_cloudfront_distribution.this.hosted_zone_id
+      evaluate_target_health = false
+    }
   }
 
-  # Each zone already holds an A record for its own name pointing at the
-  # compose instance; cutover replaces it in place.
   allow_overwrite = true
 }
 
-resource "aws_route53_record" "alias_ipv6" {
+resource "aws_route53_record" "aaaa" {
   for_each = var.cutover ? toset(var.hosts) : toset([])
 
-  zone_id = data.aws_route53_zone.host[each.value].zone_id
+  zone_id = var.zone_id
   name    = each.value
   type    = "AAAA"
 
@@ -162,4 +160,30 @@ resource "aws_route53_record" "alias_ipv6" {
   }
 
   allow_overwrite = true
+}
+
+# Before the 2026-10-07 DNS fold these records lived in one hosted zone per
+# host. Forget them without deleting: the old zones keep answering for 48h
+# after the fold (resolvers may cache their nameservers) and are then deleted
+# whole by bin/dns-fold.sh --delete. The apex copies are imported by the
+# calling root. No-ops for a root that never had them.
+removed {
+  from = aws_route53_record.alias
+  lifecycle {
+    destroy = false
+  }
+}
+
+removed {
+  from = aws_route53_record.alias_ipv6
+  lifecycle {
+    destroy = false
+  }
+}
+
+removed {
+  from = aws_route53_record.validation
+  lifecycle {
+    destroy = false
+  }
 }

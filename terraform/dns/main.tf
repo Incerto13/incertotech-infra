@@ -80,6 +80,12 @@ locals {
     # Kept as found; safe to delete once confirmed unused.
     legacy_comodo_validation = { name = "_b1bcbd8aee10408fd8ff8dfcffd11136", type = "CNAME", ttl = 300, values = ["15B13A74C4D523244223B53FBFF0A1DC.70C3E23F2F9CE2570B13B3B0AD1EF55E.eb5250d05dd5b8b.comodoca.com"] }
     legacy_acm_validation    = { name = "_cedfa544b6e1a0399479fd1084052a35", type = "CNAME", ttl = 300, values = ["_58ad25486d610be815afc8f382de9870.xyscsmcmgv.acm-validations.aws."] }
+
+    # Retired apps (no longer served by compose or k8s); folded in from their
+    # own zones on 2026-10-07 unchanged, still pointing at the compose prod box.
+    # Safe to delete.
+    legacy_django_tictactoe = { name = "django-tictactoe", type = "A", ttl = 300, values = ["54.210.33.130"] }
+    legacy_django_ecommerce = { name = "django-ecommerce", type = "A", ttl = 300, values = ["54.210.33.130"] }
   }
 }
 

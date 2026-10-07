@@ -53,18 +53,24 @@ data "terraform_remote_state" "shared" {
   }
 }
 
+data "terraform_remote_state" "dns" {
+  backend = "s3"
+  config = {
+    bucket  = "incertotech-terraform-state"
+    key     = "dns/terraform.tfstate"
+    region  = "us-east-1"
+    profile = var.aws_profile
+  }
+}
+
 module "edge" {
   source = "../modules/edge"
 
   env             = "staging"
   origin_dns_name = data.terraform_remote_state.shared.outputs.origin_dns_name
+  zone_id         = data.terraform_remote_state.dns.outputs.zone_id
   cutover         = var.cutover
-
-  # No hosted zone of their own: records go into the staging.incertotech.com zone.
-  zone_for_host = {
-    "node-ecommerce.staging.incertotech.com" = "staging.incertotech.com"
-    "django-blog.staging.incertotech.com"    = "staging.incertotech.com"
-  }
+  legacy_ipv4     = "98.80.11.100" # the docker-compose staging instance (rollback target)
 
   # Same seven hostnames nginx/default.conf-staging serves today.
   hosts = [

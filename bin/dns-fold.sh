@@ -115,17 +115,25 @@ aws route53 wait resource-record-sets-changed --id "$change"
 mkdir -p "$(dirname "$LOG")"
 echo "$(date -u +%Y-%m-%dT%H:%M:%SZ) fold $SUB $SUB_ID" >> "$LOG"
 
-# Verify straight against an apex nameserver: no referral any more, and every
-# copied record answers the same as it does from the sub-zone.
-SUB_NS=$(aws route53 get-hosted-zone --id "$SUB_ID" --query 'DelegationSet.NameServers[0]' --output text)
+# Verify: the apex now holds exactly the sub-zone's record sets (compared via
+# the API — resolved answers can't be compared, a CloudFront alias returns a
+# different subset of edge IPs on every query), and an apex nameserver gives
+# no referral any more and answers every copied name.
 fail=0
-if dig +norec +noall +authority "$SUB" @"$APEX_NS" | grep -qw NS; then
+apex_now=$(aws route53 list-resource-record-sets --hosted-zone-id "$APEX_ID" --output json \
+  | jq --argjson r "$records" '[.ResourceRecordSets[] | . as $x | select($r | any(.Name == $x.Name and .Type == $x.Type))]')
+if [ "$(jq -S 'sort_by(.Name, .Type)' <<<"$apex_now")" = "$(jq -S 'sort_by(.Name, .Type)' <<<"$records")" ]; then
+  echo "ok    apex record sets identical to the sub-zone's ($(jq length <<<"$records"))"
+else
+  echo "FAIL  apex record sets differ from the sub-zone's"; fail=1
+fi
+# (Route53 puts the apex's own NS set in the authority section of every answer;
+# only an NS owned by $SUB itself is a referral.)
+if dig +norec +noall +authority "$SUB" @"$APEX_NS" | awk -v s="$SUB" '$1 == s && $4 == "NS"' | grep -q .; then
   echo "FAIL  $APEX_NS still refers $SUB elsewhere"; fail=1
 fi
 while read -r name type; do
-  a=$(dig +short +norec "$name" "$type" @"$APEX_NS" | sort)
-  b=$(dig +short +norec "$name" "$type" @"$SUB_NS" | sort)
-  if [ -n "$a" ] && [ "$a" = "$b" ]; then echo "ok    $name $type"; else echo "FAIL  $name $type apex=[$a] sub=[$b]"; fail=1; fi
+  if [ -n "$(dig +short +norec "$name" "$type" @"$APEX_NS")" ]; then echo "ok    $name $type answers"; else echo "FAIL  $name $type: no answer from $APEX_NS"; fail=1; fi
 done < <(jq -r '.[] | select(.Type != "NS") | "\(.Name) \(.Type)"' <<<"$records")
-[ "$fail" -eq 0 ] || die "verification failed — the sub-zone is untouched; compare and fix the apex records by hand"
+[ "$fail" -eq 0 ] || die "verification failed — the batch WAS applied to the apex; the sub-zone is still in place. Compare the records above and fix the apex by hand"
 echo "folded $SUB. Leave its zone in place for 48h, then: $0 $SUB --delete"
