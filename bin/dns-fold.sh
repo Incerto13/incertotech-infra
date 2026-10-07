@@ -136,4 +136,4 @@ while read -r name type; do
   if [ -n "$(dig +short +norec "$name" "$type" @"$APEX_NS")" ]; then echo "ok    $name $type answers"; else echo "FAIL  $name $type: no answer from $APEX_NS"; fail=1; fi
 done < <(jq -r '.[] | select(.Type != "NS") | "\(.Name) \(.Type)"' <<<"$records")
 [ "$fail" -eq 0 ] || die "verification failed — the batch WAS applied to the apex; the sub-zone is still in place. Compare the records above and fix the apex by hand"
-echo "folded $SUB. Leave its zone in place for 48h, then: $0 $SUB --delete"
+echo "folded ${SUB%.}. Leave its zone in place for 48h, then: $0 ${SUB%.} --delete"

@@ -63,6 +63,22 @@ data "terraform_remote_state" "dns" {
   }
 }
 
+locals {
+  # The seven hostnames nginx/default.conf-prod serves today, plus the two
+  # k8s-only apps.
+  hosts = [
+    "incertotech.com",
+    "react-to-do.incertotech.com",
+    "react-electoral-map.incertotech.com",
+    "react-course-admin.incertotech.com",
+    "nest-to-do-api.incertotech.com",
+    "nest-blog-api.incertotech.com",
+    "nest-course-admin-api.incertotech.com",
+    "node-ecommerce.incertotech.com",
+    "django-blog.incertotech.com",
+  ]
+}
+
 # DO NOT APPLY until every prod sub-zone is folded into the apex
 # (bin/dns-fold.sh; see ../dns/fold-log.txt): while a host is still delegated
 # to its own zone, records written into the apex for it are invisible, so ACM
@@ -76,18 +92,18 @@ module "edge" {
   cutover         = var.cutover
   legacy_ipv4     = "54.210.33.130" # the docker-compose prod instance (rollback target)
 
-  # Same seven hostnames nginx/default.conf-prod serves today.
-  hosts = [
-    "incertotech.com",
-    "react-to-do.incertotech.com",
-    "react-electoral-map.incertotech.com",
-    "react-course-admin.incertotech.com",
-    "nest-to-do-api.incertotech.com",
-    "nest-blog-api.incertotech.com",
-    "nest-course-admin-api.incertotech.com",
-    "node-ecommerce.incertotech.com",
-    "django-blog.incertotech.com",
-  ]
+  hosts = local.hosts
+}
+
+# ───────────────────── adopt the folded records (2026-10-07) ─────────────────────
+# bin/dns-fold.sh moved each prod host's A record (pointing at the compose
+# instance) from its own zone into the apex; incertotech.com's own A record was
+# always there. These blocks bring them into state. Remove once applied.
+
+import {
+  for_each = toset(local.hosts)
+  to       = module.edge.aws_route53_record.a[each.key]
+  id       = "${data.terraform_remote_state.dns.outputs.zone_id}_${each.key}_A"
 }
 
 output "distribution_domain_name" {

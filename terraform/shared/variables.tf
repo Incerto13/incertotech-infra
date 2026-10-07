@@ -5,9 +5,12 @@ variable "aws_profile" {
 }
 
 variable "instance_type" {
-  description = "k3s node. Sized from measured usage: both envs' containers < 800 MB + k3s ~600 MB fits 2 GB. Deliberately small."
+  # Was t3.small (2 GB), sized from compose measurements. It ran staging alone,
+  # but the first prod deploy (2026-10-07) ran it out of memory: both envs are
+  # 14 app pods (several with sidecars) + 10 databases + k3s + Traefik.
+  description = "k3s node running staging + prod. 4 GB; changing it is an in-place stop/start (EIP and EBS kept)."
   type        = string
-  default     = "t3.small"
+  default     = "t3.medium"
 }
 
 variable "root_volume_gb" {
