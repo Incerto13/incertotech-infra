@@ -38,9 +38,9 @@ variable "aws_profile" {
 }
 
 variable "cutover" {
-  description = "Set true (in terraform.tfvars or -var) to repoint production DNS at CloudFront. Do staging first."
+  description = "Point production DNS at CloudFront (k3s). false = back to the docker-compose instance (legacy_ipv4)."
   type        = bool
-  default     = false
+  default     = true
 }
 
 data "terraform_remote_state" "shared" {
@@ -79,10 +79,6 @@ locals {
   ]
 }
 
-# DO NOT APPLY until every prod sub-zone is folded into the apex
-# (bin/dns-fold.sh; see ../dns/fold-log.txt): while a host is still delegated
-# to its own zone, records written into the apex for it are invisible, so ACM
-# validation would hang and the A records would be rejected.
 module "edge" {
   source = "../modules/edge"
 
@@ -93,17 +89,6 @@ module "edge" {
   legacy_ipv4     = "54.210.33.130" # the docker-compose prod instance (rollback target)
 
   hosts = local.hosts
-}
-
-# ───────────────────── adopt the folded records (2026-10-07) ─────────────────────
-# bin/dns-fold.sh moved each prod host's A record (pointing at the compose
-# instance) from its own zone into the apex; incertotech.com's own A record was
-# always there. These blocks bring them into state. Remove once applied.
-
-import {
-  for_each = toset(local.hosts)
-  to       = module.edge.aws_route53_record.a[each.key]
-  id       = "${data.terraform_remote_state.dns.outputs.zone_id}_${each.key}_A"
 }
 
 output "distribution_domain_name" {
